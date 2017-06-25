@@ -58,7 +58,106 @@ def datetime_utc_to_local(utc_dt):
     # https://stackoverflow.com/a/13287083
     return utc_dt.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
 
-#class Config(dict):
+def datetime_format_relative(utc_dt):
+    """ Format date relative to the current time, e.g. "2 hours ago" """
+    delta = datetime.datetime.utcnow() - utc_dt
+    if delta.days < 2:
+        seconds = (delta.days * 86400) + delta.seconds
+        minutes = seconds // 60
+        hours = minutes // 60
+        if seconds < 120:
+            return "{} seconds ago".format(seconds)
+        if minutes < 120:
+            return "{} minutes ago".format(minutes)
+        return "{} hours ago".format(hours)
+    else:
+        days = delta.days
+        weeks = days // 7
+        months = int(days / (365/12))
+        years = days // 365
+        if days < 14:
+            return "{} days ago".format(days)
+        if weeks < 8:
+            return "{} weeks ago".format(weeks)
+        if years < 1:
+            return "{} months ago".format(months)
+        months_mod = months % 12
+        return "{} years, {} months ago".format(years, months_mod) if months_mod > 0 else "{} years ago".format(years)
+
+def format_colorize(format):
+    """
+    Given a format template string, replace any format mnemonics
+    with literal ANSI color escape sequences.
+
+    Support Tmux-style formatting strings: #[...]
+    """
+    retval=""
+    if '#[' in format:
+        pos1=0
+        pos2=0
+        pos3=format.find('#[', pos1)  # Find first format-start marker
+        retval += format[pos1:pos3]   # Append any text before the first format-start marker
+        while True:
+            pos1 = pos3
+            pos2 = format.find(']', pos1+2)  # Find next format-end marker
+            if pos2 < 0:
+                retval += format[pos1:]  # No counterpart format-end marker, just append remainder of string
+                break
+            for style in format[pos1+2:pos2].split(','):
+                # styles
+                if style == 'none': retval += "\x1b[0m"
+                if style == 'bold': retval += "\x1b[1m"
+                if style == 'bright': retval += "\x1b[1m"
+                if style == 'dim': retval += "\x1b[2m"
+                if style == 'italics': retval += "\x1b[3m"
+                if style == 'underscore': retval += "\x1b[4m"
+                if style == 'blink': retval += "\x1b[5m"
+                if style == 'reverse': retval += "\x1b[7m"
+                # foreground
+                if style == 'fg=black': retval += "\x1b[30m"
+                if style == 'fg=red': retval += "\x1b[31m"
+                if style == 'fg=green': retval += "\x1b[32m"
+                if style == 'fg=yellow': retval += "\x1b[33m"
+                if style == 'fg=blue': retval += "\x1b[34m"
+                if style == 'fg=magenta': retval += "\x1b[35m"
+                if style == 'fg=cyan': retval += "\x1b[36m"
+                if style == 'fg=white': retval += "\x1b[37m"
+                if style == 'fg=default': retval += "\x1b[39m"
+                if style == 'fg=brightblack': retval += "\x1b[90m"
+                if style == 'fg=brightred': retval += "\x1b[91m"
+                if style == 'fg=brightgreen': retval += "\x1b[92m"
+                if style == 'fg=brightyellow': retval += "\x1b[93m"
+                if style == 'fg=brightblue': retval += "\x1b[94m"
+                if style == 'fg=brightmagenta': retval += "\x1b[95m"
+                if style == 'fg=brightcyan': retval += "\x1b[96m"
+                if style == 'fg=brightwhite': retval += "\x1b[97m"
+                # background
+                if style == 'bg=black': retval += "\x1b[40m"
+                if style == 'bg=red': retval += "\x1b[41m"
+                if style == 'bg=green': retval += "\x1b[42m"
+                if style == 'bg=yellow': retval += "\x1b[43m"
+                if style == 'bg=blue': retval += "\x1b[44m"
+                if style == 'bg=magenta': retval += "\x1b[45m"
+                if style == 'bg=cyan': retval += "\x1b[46m"
+                if style == 'bg=white': retval += "\x1b[47m"
+                if style == 'bg=default': retval += "\x1b[49m"
+                if style == 'bg=brightblack': retval += "\x1b[100m"
+                if style == 'bg=brightred': retval += "\x1b[101m"
+                if style == 'bg=brightgreen': retval += "\x1b[102m"
+                if style == 'bg=brightyellow': retval += "\x1b[103m"
+                if style == 'bg=brightblue': retval += "\x1b[104m"
+                if style == 'bg=brightmagenta': retval += "\x1b[105m"
+                if style == 'bg=brightcyan': retval += "\x1b[106m"
+                if style == 'bg=brightwhite': retval += "\x1b[107m"
+            pos3 = format.find('#[',pos2+1)  # Find next format-start marker
+            retval += format[pos2+1:pos3 if (pos3 > 0) else None]  # Append text between current format-end and next format-start marker
+            if pos3 < 0:
+                break
+    else:
+        retval=format
+    return retval
+
+
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.group(context_settings=CONTEXT_SETTINGS)
@@ -103,23 +202,39 @@ def command_grep():
 @click.argument('id', nargs=-1)
 def command_list(id, show_all, sort_field, format):
     """ List entries """
-    format=format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[bold]#[fg=black](%tags)#[none]"
+    id_list = id
+
+    # Define output line format
+    #format = format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[bold]#[fg=black](%tags)#[none]"
+    format = format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
+    format_line=format_colorize(format)  # Evaluate style mnemonics ahead of time
 
     # Map sort_field to field position in the index file
     sort_pos = INDEXFILE_FIELDS.get(sort_field, 5)
 
-    #click.echo("command_list: id:%s, show_all:%s, sort_field:%s, sort_pos:%s, format:%s" % (id, show_all, sort_field, sort_pos, format))
-
-    args_cat = [ os.path.join(LINKPAD_DB, 'index') ]
-    args_sort = [ '-t\t', '-k%s' % (sort_pos) ]
-    for line in sh.sort(sh.cat(args_cat[0]), args_sort[0], args_sort[1]):
+    for line in sh.sort(sh.cat(os.path.join(LINKPAD_DB, 'index')),
+                        '-t\t', '-k' + str(sort_pos)):
         index_entry = db_index_parse_row(line)
-        click.echo("{} {} {} {} {}".format(
-            click.style(index_entry['id'][0:8], fg='yellow'),
-            index_entry['title'],
-            click.style('['+index_entry['url']+']', fg='cyan'),
-            click.style('('+index_entry['tags']+')', fg='green', bold=True),
-            click.style(index_entry['created_date'], fg='black', bold=True)))
+        created_dt = datetime.datetime.strptime(index_entry['created_date'], "%Y-%m-%d %H:%M:%S %Z")
+
+        # Filter by caller-supplied id list
+        if len(id_list) > 0:
+            if not any(id_val == index_entry['id'][0:len(id_val)] for id_val in id_list):
+                continue
+
+        # Build the final output line based on the 'format' template
+        entry_line = format_line
+        subs = [
+            ('%id_short', index_entry['id'][0:8]),
+            ('%id', index_entry['id']),
+            ('%url', index_entry['url']),
+            ('%title', index_entry['title']),
+            ('%tags', index_entry['tags']),
+            ('%created_date', created_dt.strftime('%Y-%m-%d %H:%M:%S %Z')),
+            ('%created_ago', datetime_format_relative(created_dt))]
+        for search, replacement in subs:
+            entry_line = entry_line.replace(search, replacement)
+        click.echo(entry_line)
 
 @cli.command(name='remove', short_help='Remove entry')
 def command_remove():
@@ -148,9 +263,14 @@ def command_update(id, update_all, update_cache):
 
 @cli.command(name='version', short_help='Show version')
 def command_version():
-    click.echo("%s %s" % (PROGRAM, VERSION))
+    click.echo("{} {}".format(PROGRAM, VERSION))
 
-@cli.group(name='database', short_help='Manage database')
+@cli.command(name='printf')
+@click.argument('format', required=True)
+def command_printf(format):
+    click.echo(format_colorize(format))
+
+@cli.group(name='database', short_help='Database management')
 def command_database():
     pass
 

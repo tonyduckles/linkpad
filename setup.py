@@ -5,7 +5,9 @@ setup(
     version='0.1',
     py_modules=['linkpad'],
     install_requires=[
-        'Click',
+        'click',
+        'pyyaml',
+        'sh',
     ],
     entry_points='''
         [console_scripts]
