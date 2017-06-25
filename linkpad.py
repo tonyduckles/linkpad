@@ -28,30 +28,69 @@ import sh
 import datetime
 import pkg_resources
 
-VERSION=0.1
-PROGRAM=os.path.basename(sys.argv[0])
+VERSION = 0.1
+PROGRAM = os.path.basename(sys.argv[0])
 
-LINKPAD_BASEDIR=os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.linkpad')
-LINKPAD_DBNAME=os.environ.get('LINKPAD_DBNAME') or "default"
-LINKPAD_DB=os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
+LINKPAD_BASEDIR = os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.linkpad')
+LINKPAD_DBNAME = os.environ.get('LINKPAD_DBNAME') or "default"
+LINKPAD_DB = os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
 
-INDEXFILE_FIELDS = { 'id': 1,
-                     'url': 2,
-                     'title': 3,
-                     'tags': 4,
-                     'created_date': 5 }
+DB_INDEXFILE_FIELDS = { 'id': 1,
+                        'url': 2,
+                        'title': 3,
+                        'tags': 4,
+                        'created_on': 5,
+                        'soft_deleted': 6 }
 
 DB_DATETIMEFMT_INTERNAL_FULL    = "%Y-%m-%dT%H:%M:%SZ%z"   # Ex: "2011-09-23T04:36:00Z+0000"
 DB_DATETIMEFMT_INTERNAL_COMPACT = "%Y-%m-%dT%H:%M:%SZ"     # Ex: "2011-09-23T04:36:00Z"
 DB_DATETIMEFMT_EXTERNAL         = "%Y-%m-%d %H:%M:%S %Z"   # Ex: "2011-09-23 04:36:00 UTC"
 
-def db_index_parse_row(line):
+
+
+###
+### Database utilities
+###
+
+def db_exists(dbname = None):
+    dbname = dbname or LINKPAD_DBNAME
+    dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
+    return True if os.path.isdir(dbpath) and os.path.isfile(os.path.join(dbpath, 'format')) else False
+
+def db_create_db(dbname):
+    """ Initialize new database """
+    dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
+    if os.path.isdir(dbpath):
+        sys.exit("Error: db_create_db(): directory already exists: {}".format(dbpath))
+    _git = sh.git.bake('-C', dbpath)  # Helper to run 'git' commands against this specific repo
+
+    sh.mkdir('-p', dbpath)   # Create directory (and any needed parent directories)
+    sh.chmod('700', dbpath)
+    _git.init('-q')          # Init git repo
+
+    #index_file = os.path.join(dbpath, 'index')
+    #sh.touch(index_file)
+    #_git.add(index_file)
+
+    format_file = os.path.join(dbpath, 'format')
+    sh.echo("1", _out=format_file)
+    _git.add(format_file)
+
+    _git.commit('-q', '-m', "Create database")
+
+def db_index_parse_row(index_line):
     """ Given a raw line from the DB index file, map that to a dict """
-    line_fields = line.split('\t')
+    fields = index_line.split('\t')
     index_entry = {}
-    for name, pos in INDEXFILE_FIELDS.items():
-        index_entry[name] = line_fields[pos-1]
+    for name, pos in DB_INDEXFILE_FIELDS.items():
+        index_entry[name] = fields[pos-1]
     return index_entry
+
+
+
+###
+### Misc utilities
+###
 
 def datetime_utc_to_local(utc_dt):
     """ Convert a UTC datetime to local datetime """
@@ -159,6 +198,10 @@ def format_colorize(format):
 
 
 
+###
+### Main command-line entry point
+###
+
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 @click.group(context_settings=CONTEXT_SETTINGS)
 def cli():
@@ -168,56 +211,58 @@ def cli():
     """
     pass
 
-@cli.command(name='add', short_help='Add new entry')
-@click.option('--comment', 'comment', metavar='TEXT', help='Comment text')
-@click.option('--tags', 'tags', metavar='TAGS', help='List of tags')
-@click.option('--cache-webpage', 'cache_webpage', is_flag=True, help='Maintain a cached copy of this webpage')
-@click.option('--no-edit', 'no_edit', is_flag=True, help='Suppress launching $EDITOR to edit new entry file')
-@click.option('--title', 'title', metavar='TITLE', help='Title. By default title will be fetched at run-time')
-@click.option('--created-date', 'created_date', metavar='DATE', help='Override creation date')
-@click.option('--id', 'id', metavar='ID', help='Override internal ID')
-@click.argument('url', required=True)
-def command_add(url, id, title, tags, comment, created_date, cache_webpage, no_edit):
-    """
-    Add a new bookmark to the database using $EDITOR
-    """
-    click.echo("add: url=%s, title=%s, tags=%s, comment=%s" % (url, title, tags, comment))
+#@cli.command(name='add',
+#             short_help='Add new entry')
+#@click.option('--title', 'title', metavar='TITLE', help='Title, by default webpage title will be fetched')
+#@click.option('--tags', 'tags', metavar='TAGS', help='Space-delimited list of tags')
+#@click.option('--comment', 'comment', metavar='TEXT', help='Comments')
+#@click.option('--cache-webpage', 'cache_webpage', is_flag=True, help='Archive a cached copy of this webpage')
+##@click.option('--no-edit', 'no_edit', is_flag=True, help='Suppress launching $EDITOR to edit new entry file')
+##@click.option('--created-on', 'created_on', metavar='DATE', help='Override creation date')
+##@click.option('--id', 'id', metavar='ID', help='Override internal ID')
+#@click.argument('url', required=True)
+#def command_add(url, id, title, tags, comment, created_on, cache_webpage, no_edit):
+#    """
+#    Add a new bookmark to the database using $EDITOR
+#    """
+#    click.echo("add: url=%s, title=%s, tags=%s, comment=%s" % (url, title, tags, comment))
 
-@cli.command(name='edit', short_help='Edit existing entry')
-@click.argument('id', required=True, nargs=-1)
-def command_edit(id):
-    """
-    Edit an existing bookmark in the database using $EDITOR
-    """
-    click.echo("edit")
+#@cli.command(name='edit',
+#             short_help='Edit existing entry')
+#@click.argument('id', required=True, nargs=-1)
+#def command_edit(id):
+#    """
+#    Edit an existing bookmark in the database using $EDITOR
+#    """
+#    click.echo("edit")
 
-@cli.command(name='grep', short_help='Find entries by grep\'ing through cached webpage')
-def command_grep():
-    click.echo("grep")
+#@cli.command(name='grep', short_help='Find entries by grep\'ing through cached webpage')
+#def command_grep():
+#    click.echo("grep")
 
-@cli.command(name='list', short_help='List entries')
+@cli.command(name='list',
+             short_help='List entries')
 @click.option('-a', '--all', 'show_all', is_flag=True, help='All entries, including soft-deleted entries')
-@click.option('-s', '--sort', 'sort_field', type=click.Choice(['id','url','title','tags','created_date']), default='created_date', help='Sort list by entry field')
+@click.option('-s', '--sort', 'sort_field', type=click.Choice(['id','url','title','tags','created_on']), default='created_on', help='Sort list by entry field')
 @click.option('-f', '--format', 'format', metavar='FORMAT', help='Custom output format')
-@click.argument('id', nargs=-1)
-def command_list(id, show_all, sort_field, format):
+@click.argument('id_list', metavar='[ID]...', nargs=-1)
+def command_list(id_list, show_all, sort_field, format):
     """ List entries """
-    id_list = id
+    if not db_exists():
+        sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
 
     # Define output line format
     #format = format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[bold]#[fg=black](%tags)#[none]"
     format = format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
-    format_line=format_colorize(format)  # Evaluate style mnemonics ahead of time
+    format_line = format_colorize(format)  # Evaluate style mnemonics ahead of time
 
-    # Map sort_field to field position in the index file
-    sort_pos = INDEXFILE_FIELDS.get(sort_field, 5)
+    for index_line in sh.sort(sh.cat(os.path.join(LINKPAD_DB, 'index')),
+                              field_separator='\t',
+                              key=str(DB_INDEXFILE_FIELDS.get(sort_field))):
+        index_entry = db_index_parse_row(index_line)
+        created_dt = datetime.datetime.strptime(index_entry['created_on'], "%Y-%m-%d %H:%M:%S %Z")
 
-    for line in sh.sort(sh.cat(os.path.join(LINKPAD_DB, 'index')),
-                        '-t\t', '-k' + str(sort_pos)):
-        index_entry = db_index_parse_row(line)
-        created_dt = datetime.datetime.strptime(index_entry['created_date'], "%Y-%m-%d %H:%M:%S %Z")
-
-        # Filter by caller-supplied id list
+        # Filter by caller-supplied id_list
         if len(id_list) > 0:
             if not any(id_val == index_entry['id'][0:len(id_val)] for id_val in id_list):
                 continue
@@ -230,38 +275,42 @@ def command_list(id, show_all, sort_field, format):
             ('%url', index_entry['url']),
             ('%title', index_entry['title']),
             ('%tags', index_entry['tags']),
-            ('%created_date', created_dt.strftime('%Y-%m-%d %H:%M:%S %Z')),
+            ('%created_on', created_dt.strftime('%Y-%m-%d %H:%M:%S %Z')),
             ('%created_ago', datetime_format_relative(created_dt))]
         for search, replacement in subs:
             entry_line = entry_line.replace(search, replacement)
         click.echo(entry_line)
 
-@cli.command(name='remove', short_help='Remove entry')
-def command_remove():
-    click.echo("remove")
+#@cli.command(name='remove',
+#             short_help='Remove entry')
+#def command_remove():
+#    click.echo("remove")
 
-@cli.command(name='search', short_help='Find entries by keyword')
-def command_search():
-    click.echo("search")
+#@cli.command(name='search',
+#             short_help='Find entries by keyword')
+#def command_search():
+#    click.echo("search")
 
-@cli.command(name='show', short_help='Show entry contents')
-def command_show():
-    click.echo("show")
+#@cli.command(name='show',
+#             short_help='Show entry contents')
+#def command_show():
+#    click.echo("show")
 
-@cli.command(name='tags', short_help='List tags')
-def command_tags():
-    click.echo("tags")
+#@cli.command(name='tags',
+#             short_help='List tags')
+#def command_tags():
+#    click.echo("tags")
 
-@cli.command(name='update',
-             short_help='Update bookmark titles, re-cache webpage',
-             help='Update bookmark titles, re-cache webpage')
-@click.option('--all', 'update_all', is_flag=True, help='Refresh all entries')
-@click.option('--cache', 'update_cache', is_flag=True, help='Refresh cached webpage')
-@click.argument('id', required=False, nargs=-1)
-def command_update(id, update_all, update_cache):
-    click.echo("update")
+#@cli.command(name='refresh',
+#             short_help='Update bookmark titles, re-cache webpage')
+#@click.option('--all', 'update_all', is_flag=True, help='Refresh all entries')
+#@click.option('--cache', 'update_cache', is_flag=True, help='Refresh cached webpage')
+#@click.argument('id_list', metavar='[ID]...', required=False, nargs=-1)
+#def command_refresh(id_list, update_all, update_cache):
+#    click.echo("refresh")
 
-@cli.command(name='version', short_help='Show version')
+@cli.command(name='version',
+             short_help='Show version')
 def command_version():
     click.echo("{} {}".format(PROGRAM, VERSION))
 
@@ -272,23 +321,52 @@ def command_printf(format):
 
 @cli.group(name='database', short_help='Database management')
 def command_database():
+    """ Database management """
     pass
 
-@command_database.command(name='name', short_help='Show current database name')
-def command_database_name():
-    click.echo("db name")
+@command_database.command(name='name')
+@click.option('-f', '--full', 'full_path', is_flag=True, help='Print full filepath')
+def command_database_name(full_path):
+    """
+    Show current database name
+    """
+    click.echo(LINKPAD_DB if full_path else LINKPAD_DBNAME)
 
-@command_database.command(name='list', short_help='List available database names')
-def command_database_list():
-    click.echo("db list")
+@command_database.command(name='list')
+@click.option('-f', '--full', 'full_path', is_flag=True, help='Print full filepath')
+def command_database_list(full_path):
+    """
+    List available database names
+    """
+    with os.scandir(LINKPAD_BASEDIR) as it:
+        for entry in it:
+            if entry.is_dir():
+                click.echo(entry.path if full_path else entry.name)
 
-@command_database.command(name='env', short_help='Display the commands to setup the shell environment for a database')
-def command_database_env():
-    click.echo("db env")
+@command_database.command(name='env')
+@click.argument('dbname', required=False)
+def command_database_env(dbname):
+    """
+    Display the commands to setup the shell environment for given database name
+    """
+    dbname = dbname or LINKPAD_DBNAME
+    if not db_exists(dbname):
+        sys.exit("Error: database '{}' does not exist".format(dbname))
+
+    click.echo('export LINKPAD_DBNAME=\'{}\''.format(dbname))
+    click.echo('# Run this command to configure your shell:')
+    click.echo('# eval $(linkpad database env \'{}\')'.format(dbname))
+
 
 @command_database.command(name='create', short_help='Create a new database')
-def command_database_list():
-    click.echo("db list")
+@click.argument('dbname')
+def command_database_create(dbname):
+    """
+    Create a new database
+    """
+    if db_exists(dbname):
+        sys.exit("Error: database '{}' already exists".format(dbname))
+    db_create_db(dbname)
 
 if __name__ == '__main__':
     cli()
