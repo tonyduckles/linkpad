@@ -86,6 +86,27 @@ def db_index_parse_row(index_line):
         index_entry[name] = fields[pos-1]
     return index_entry
 
+def db_entry_search_match(index_entry, search_arg):
+    """ Check if this index_entry matches the given search_arg """
+    if search_arg[0:6] == "title:":
+        val = search_arg[6:]
+        return (val.lower() in index_entry['title'].lower() if len(val) > 0 else len(index_entry['title']) == 0)
+    elif search_arg[0:4] == "tag:":
+        val = search_arg[4:]
+        return (val.lower() in index_entry['tags'].lower() if len(val) > 0 else len(index_entry['tags']) == 0)
+    elif search_arg[0:5] == "site:":
+        val = search_arg[5:]
+        return (val.lower() in index_entry['url'].lower() if len(val) > 0 else len(index_entry['url']) == 0)
+    elif search_arg[0:3] == "id:":
+        val = search_arg[3:]
+        return (val.lower() in index_entry['id'][0:len(val)].lower() if len(val) > 0 else len(index_entry['id']) == 0)
+    else:
+        string = "{} {} {} {}".format(index_entry['id'],
+                                      index_entry['title'],
+                                      index_entry['url'],
+                                      index_entry['tags'])
+        return (search_arg.lower() in string.lower())
+
 
 
 ###
@@ -245,9 +266,32 @@ def cli():
 @click.option('-a', '--all', 'show_all', is_flag=True, help='All entries, including soft-deleted entries')
 @click.option('-s', '--sort', 'sort_field', type=click.Choice(['id','url','title','tags','created_on']), default='created_on', help='Sort list by entry field')
 @click.option('-f', '--format', 'format', metavar='FORMAT', help='Custom output format')
-@click.argument('id_list', metavar='[ID]...', nargs=-1)
-def command_list(id_list, show_all, sort_field, format):
-    """ List entries """
+@click.argument('search_args', metavar='[TEXT]...', nargs=-1)
+def command_list(search_args, show_all, sort_field, format):
+    """
+    List all entries, or search for matching entries.
+
+    List all entries by default (i.e. no search filters).
+    Optionally pass in a list of search strings to filter entries.
+
+    \b
+    Search string format:
+       TEXT            Search for text in any -- id, title, tags, url
+       title:TEXT      Search for text in title
+       tag:TEXT        Search for text in tag
+       site:TEXT       Search for text in url
+       id:TEXT         Search for entry id prefix match
+
+    \b
+    Prefix search string for AND/OR/NOT handling:
+       +TEXT           All these words
+        TEXT           Any of these words
+       -TEXT           None of these words
+
+    Note: when using exclusions, you must pass in "--" as the first
+    argument as the separator for options and arguments, which is the
+    POSIX convention.
+    """
     if not db_exists():
         sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
 
@@ -256,18 +300,39 @@ def command_list(id_list, show_all, sort_field, format):
     format = format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
     format_line = format_colorize(format)  # Evaluate style mnemonics ahead of time
 
+    search_all_list = []
+    search_not_list = []
+    search_any_list = []
+    for arg in search_args:
+        if arg[0] == "+":
+            search_all_list.append(arg[1:])
+        elif arg[0] == "-":
+            search_not_list.append(arg[1:])
+        else:
+            search_any_list.append(arg)
+
     for index_line in sh.sort(sh.cat(os.path.join(LINKPAD_DB, 'index')),
                               field_separator='\t',
                               key=str(DB_INDEXFILE_FIELDS.get(sort_field))):
         index_entry = db_index_parse_row(index_line)
-        created_dt = datetime.datetime.strptime(index_entry['created_on'], "%Y-%m-%d %H:%M:%S %Z")
 
-        # Filter by caller-supplied id_list
-        if len(id_list) > 0:
-            if not any(id_val == index_entry['id'][0:len(id_val)] for id_val in id_list):
+        # Hide soft-deleted entries by default
+        if index_entry['soft_deleted'] == 'true' and not show_all:
+            continue
+
+        # Filter by search_args
+        if len(search_not_list) > 0:
+            if any(db_entry_search_match(index_entry, search_arg) for search_arg in search_not_list):
+                continue
+        if len(search_all_list) > 0:
+            if not all(db_entry_search_match(index_entry, search_arg) for search_arg in search_all_list):
+                continue
+        if len(search_any_list) > 0:
+            if not any(db_entry_search_match(index_entry, search_arg) for search_arg in search_any_list):
                 continue
 
         # Build the final output line based on the 'format' template
+        created_dt = datetime.datetime.strptime(index_entry['created_on'], "%Y-%m-%d %H:%M:%S %Z")
         entry_line = format_line
         subs = [
             ('%id_short', index_entry['id'][0:8]),
@@ -338,16 +403,15 @@ def command_database_list(full_path):
     """
     List available database names
     """
-    with os.scandir(LINKPAD_BASEDIR) as it:
-        for entry in it:
-            if entry.is_dir():
-                click.echo(entry.path if full_path else entry.name)
+    for entry in os.scandir(LINKPAD_BASEDIR):
+        if entry.is_dir():
+            click.echo(entry.path if full_path else entry.name)
 
 @command_database.command(name='env')
 @click.argument('dbname', required=False)
 def command_database_env(dbname):
     """
-    Display the commands to setup the shell environment for given database name
+    Display the commands to setup the shell environment for a database
     """
     dbname = dbname or LINKPAD_DBNAME
     if not db_exists(dbname):
@@ -356,7 +420,6 @@ def command_database_env(dbname):
     click.echo('export LINKPAD_DBNAME=\'{}\''.format(dbname))
     click.echo('# Run this command to configure your shell:')
     click.echo('# eval $(linkpad database env \'{}\')'.format(dbname))
-
 
 @command_database.command(name='create', short_help='Create a new database')
 @click.argument('dbname')
