@@ -79,12 +79,26 @@ def db_create_db(dbname):
     _git.commit('-q', '-m', "Create database")
 
 def db_index_parse_row(index_line):
-    """ Given a raw line from the DB index file, map that to a dict """
+    """ Given a raw line from the DB index file, map that to an (internal format) dict """
     fields = index_line.split('\t')
-    index_entry = {}
+    raw_index_entry = {}
     for name, pos in DB_INDEXFILE_FIELDS.items():
-        index_entry[name] = fields[pos-1]
-    return index_entry
+        raw_index_entry[name] = fields[pos-1]
+    return raw_index_entry
+
+def db_entry_externalize(entry_internal):
+    """ Convert an entry dict from internal to external format """
+    entry_external = entry_internal
+    entry_external['tags'] = sorted(entry_internal['tags'].split(','))
+    entry_external['created_on'] = datetime.datetime.strptime(entry_internal['created_on'], "%Y-%m-%d %H:%M:%S %Z")
+    return entry_external
+
+def db_entry_internalize(entry_external):
+    """ Convert an entry dict from external to internal format """
+    entry_internal = entry_external
+    entry_internal['tags'] = ','.join(sorted(entry_external['tags']))
+    entry_internal['created_on'] = entry_external['created_on'].strftime("%Y-%m-%d %H:%M:%S %Z")
+    return entry_internal
 
 def db_entry_search_match(index_entry, search_arg):
     """ Check if this index_entry matches the given search_arg """
@@ -93,7 +107,7 @@ def db_entry_search_match(index_entry, search_arg):
         return (val.lower() in index_entry['title'].lower() if len(val) > 0 else len(index_entry['title']) == 0)
     elif search_arg[0:4] == "tag:":
         val = search_arg[4:]
-        return (val.lower() in index_entry['tags'].lower() if len(val) > 0 else len(index_entry['tags']) == 0)
+        return (any(val.lower() in tag.lower() for tag in index_entry['tags']) if len(val) > 0 else len(index_entry['tags']) == 0)
     elif search_arg[0:5] == "site:":
         val = search_arg[5:]
         url_domain = "{0.netloc}".format(urllib.parse.urlsplit(index_entry['url']))
@@ -319,7 +333,7 @@ def command_list(search_args, show_all, sort_field, format):
     for index_line in sh.sort(sh.cat(os.path.join(LINKPAD_DB, 'index')),
                               field_separator='\t',
                               key=str(DB_INDEXFILE_FIELDS.get(sort_field))):
-        index_entry = db_index_parse_row(index_line)
+        index_entry = db_entry_externalize(db_index_parse_row(index_line))
 
         # Hide soft-deleted entries by default
         if index_entry['soft_deleted'] == 'true' and not show_all:
@@ -337,16 +351,15 @@ def command_list(search_args, show_all, sort_field, format):
                 continue
 
         # Build the final output line based on the 'format' template
-        created_dt = datetime.datetime.strptime(index_entry['created_on'], "%Y-%m-%d %H:%M:%S %Z")
         entry_line = format_line
         subs = [
             ('%id_short', index_entry['id'][0:8]),
             ('%id', index_entry['id']),
             ('%url', index_entry['url']),
             ('%title', index_entry['title']),
-            ('%tags', index_entry['tags']),
-            ('%created_on', created_dt.strftime('%Y-%m-%d %H:%M:%S %Z')),
-            ('%created_ago', datetime_format_relative(created_dt))]
+            ('%tags', ','.join(index_entry['tags'])),
+            ('%created_on', index_entry['created_on'].strftime('%Y-%m-%d %H:%M:%S %Z')),
+            ('%created_ago', datetime_format_relative(index_entry['created_on']))]
         for search, replacement in subs:
             entry_line = entry_line.replace(search, replacement)
         click.echo(entry_line)
