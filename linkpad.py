@@ -26,7 +26,7 @@ import yaml
 import json
 import sh
 import datetime
-import pkg_resources
+import urllib.parse
 
 VERSION = 0.1
 PROGRAM = os.path.basename(sys.argv[0])
@@ -96,6 +96,10 @@ def db_entry_search_match(index_entry, search_arg):
         return (val.lower() in index_entry['tags'].lower() if len(val) > 0 else len(index_entry['tags']) == 0)
     elif search_arg[0:5] == "site:":
         val = search_arg[5:]
+        url_domain = "{0.netloc}".format(urllib.parse.urlsplit(index_entry['url']))
+        return (val.lower() in url_domain.lower() if len(val) > 0 else len(url_domain) == 0)
+    elif search_arg[0:4] == "url:":
+        val = search_arg[4:]
         return (val.lower() in index_entry['url'].lower() if len(val) > 0 else len(index_entry['url']) == 0)
     elif search_arg[0:3] == "id:":
         val = search_arg[3:]
@@ -279,7 +283,8 @@ def command_list(search_args, show_all, sort_field, format):
        TEXT            Search for text in any -- id, title, tags, url
        title:TEXT      Search for text in title
        tag:TEXT        Search for text in tag
-       site:TEXT       Search for text in url
+       url:TEXT        Search for text in url
+       site:TEXT       Search for text in url domain name
        id:TEXT         Search for entry id prefix match
 
     \b
