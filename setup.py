@@ -8,9 +8,10 @@ setup(
         'click',
         'pyyaml',
         'sh',
+        'bs4',
     ],
-    entry_points='''
+    entry_points="""
         [console_scripts]
         linkpad=linkpad:cli
-    ''',
+    """,
 )

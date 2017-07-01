@@ -4,15 +4,15 @@
 
 # Features:
 # =========
-# - Supports multiple separate bookmark databases under ~/.linkpad/<db>/.
-# - Each database is version-controlled via Git, which -- aside from version
-#   control -- provides an easy way to synchronize databases between machines.
+# - Supports multiple separate bookmark databases under ~/.linkpad/<dbname>/.
+# - Each database is version-controlled via Git, which [aside from version
+#   control!] provides an easy way to synchronize databases between machines.
 #
 # Database Structure:
 # ===================
-# - Bookmarks are YAML files stored at $db/entries/<id>.yml
-# - Index of bookmarks is maintained in plain text file at $db/index
-# - Optional cache of full-text webpage is stored at $db/cache/<id>.html
+# - Bookmarks are stored as a JSON dict at "$dbpath/bookmarks.json".
+# - Optional webpage archive is stored at "$dbpath/archive/<id>.html".
+# - Internal schema veraion stored at "$dbpath/format".
 #
 # Dependencies:
 # =============
@@ -21,30 +21,38 @@
 
 import os
 import sys
+import collections
 import click
 import yaml
 import json
 import sh
 import datetime
+import uuid
 import urllib.parse
+import urllib.request
+import bs4
+import http.client
+
+# Workaround for "http.client.HTTPException: got more than 100 headers" exceptions.
+# Some servers can be misconfigured and can return an expected # of headers.
+http.client._MAXHEADERS = 1000
 
 VERSION = 0.1
 PROGRAM = os.path.basename(sys.argv[0])
 
 LINKPAD_BASEDIR = os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.linkpad')
 LINKPAD_DBNAME = os.environ.get('LINKPAD_DBNAME') or "default"
-LINKPAD_DB = os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
+LINKPAD_DBPATH = os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
 
-DB_INDEXFILE_FIELDS = { 'id': 1,
-                        'url': 2,
-                        'title': 3,
-                        'tags': 4,
-                        'created_on': 5,
-                        'soft_deleted': 6 }
-
-DB_DATETIMEFMT_INTERNAL_FULL    = "%Y-%m-%dT%H:%M:%SZ%z"   # Ex: "2011-09-23T04:36:00Z+0000"
-DB_DATETIMEFMT_INTERNAL_COMPACT = "%Y-%m-%dT%H:%M:%SZ"     # Ex: "2011-09-23T04:36:00Z"
-DB_DATETIMEFMT_EXTERNAL         = "%Y-%m-%d %H:%M:%S %Z"   # Ex: "2011-09-23 04:36:00 UTC"
+DB_ENTRY_REQUIRED_FIELDS = [ 'id',
+                             'url',
+                             'title',
+                             'tags',
+                             'created_date' ]
+DB_ENTRY_OPTIONAL_FIELDS = [ 'archived',
+                             'archived_date',
+                             'extended',
+                             'soft_deleted' ]
 
 
 
@@ -53,6 +61,7 @@ DB_DATETIMEFMT_EXTERNAL         = "%Y-%m-%d %H:%M:%S %Z"   # Ex: "2011-09-23 04:
 ###
 
 def db_exists(dbname = None):
+    """ Check if database exists """
     dbname = dbname or LINKPAD_DBNAME
     dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
     return True if os.path.isdir(dbpath) and os.path.isfile(os.path.join(dbpath, 'format')) else False
@@ -78,52 +87,240 @@ def db_create_db(dbname):
 
     _git.commit('-q', '-m', "Create database")
 
-def db_index_parse_row(index_line):
-    """ Given a raw line from the DB index file, map that to an (internal format) dict """
-    fields = index_line.split('\t')
-    raw_index_entry = {}
-    for name, pos in DB_INDEXFILE_FIELDS.items():
-        raw_index_entry[name] = fields[pos-1]
-    return raw_index_entry
+def db_load_db():
+    """ Load all entries from database file """
+    if not db_exists():
+        sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
 
-def db_entry_externalize(entry_internal):
+    dbpath = os.path.join(LINKPAD_DBPATH, 'bookmarks.json')
+    if os.path.isfile(dbpath):
+        with open(dbpath, 'r', encoding='utf-8') as f:
+            db_entry_list = [ db_entry_internalize(entry) for entry in json.load(f) ]
+    else:
+        db_entry_list = []
+    return db_entry_list
+
+def db_save_db(db_entry_list):
+    """ Save all entries to database file """
+    if not db_exists():
+        sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
+
+    dbpath = os.path.join(LINKPAD_DBPATH, 'bookmarks.json')
+    with open(dbpath, 'w', encoding='utf-8') as f:
+        # JSON encode each entry individually so we can enforce
+        # newlines between each row
+        first = True
+        for entry in db_entry_list:
+            f.write('[' if first else ',\n')
+            first = False
+            f.write(json.dumps(db_entry_externalize(entry), separators=(',', ':')))
+        f.write(']')
+
+def db_entry_get(db_entry_list, url):
+    """ Find an existing entry in the database based on url """
+    matches = [ entry for entry in db_entry_list if entry['url'] == url ]
+    if len(matches) > 1:
+        raise Exception('Internal Error: found multiple matching entries for url "{}"'.format(url))
+    return matches[0] if len(matches) > 0 else None
+
+def db_entry_generate_id():
+    """ Generate a new uuid for a new entry """
+    return str(uuid.uuid4()).lower().replace('-','')
+
+def db_entry_externalize(entry_internal, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime_as_local=False):
     """ Convert an entry dict from internal to external format """
-    entry_external = entry_internal
-    entry_external['tags'] = sorted(entry_internal['tags'].split(','))
-    entry_external['created_on'] = datetime.datetime.strptime(entry_internal['created_on'], "%Y-%m-%d %H:%M:%S %Z")
+    entry_external = {}
+    for key in entry_internal:
+        entry_external[key] = entry_internal[key]
+    created_dt = entry_internal['created_date'].replace(tzinfo=datetime.timezone.utc)
+    if datetime_as_local:
+        created_dt = datetime_utc_to_local(created_dt)
+    entry_external['created_date'] = created_dt.strftime(datetime_format)
     return entry_external
 
-def db_entry_internalize(entry_external):
+def db_entry_internalize(entry_external, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     """ Convert an entry dict from external to internal format """
-    entry_internal = entry_external
-    entry_internal['tags'] = ','.join(sorted(entry_external['tags']))
-    entry_internal['created_on'] = entry_external['created_on'].strftime("%Y-%m-%d %H:%M:%S %Z")
+    entry_internal = {}
+    for key in entry_external:
+        entry_internal[key] = entry_external[key]
+    entry_internal['created_date'] = datetime.datetime.strptime(
+            entry_external['created_date'],
+            datetime_format).astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
     return entry_internal
 
-def db_entry_search_match(index_entry, search_arg):
-    """ Check if this index_entry matches the given search_arg """
+def db_entry_to_editdoc(entry, datetime_format='%Y-%m-%d %H:%M:%S %z', datetime_as_local=True):
+    """ Return an OrderedDict containing the editable fields for an entry, for user-editing """
+    doc = collections.OrderedDict()
+    for key in DB_ENTRY_REQUIRED_FIELDS:
+        doc[key] = entry[key]
+    for key in DB_ENTRY_OPTIONAL_FIELDS:
+        if key in entry:
+            doc[key] = entry[key]
+
+    return db_entry_externalize(doc, datetime_format, datetime_as_local)
+
+def db_entry_from_editdoc(doc, datetime_format='%Y-%m-%d %H:%M:%S %z'):
+    """ Return a dict from a user-edited entry """
+    entry = {}
+    for key in DB_ENTRY_REQUIRED_FIELDS:
+        entry[key] = doc[key]
+    for key in DB_ENTRY_OPTIONAL_FIELDS:
+        if key in doc:
+            entry[key] = doc[key]
+
+    return db_entry_internalize(entry, datetime_format)
+
+def db_entry_add(db_entry_list, url, title='', tags=[], extended='', use_editor=True):
+    """ Add a new entry to the database """
+    # If we already have an entry with this same url, abort
+    match = db_entry_get(db_entry_list, url)
+    if match:
+        sys.exit('Error: entry already exists for url "{}"'.format(url))
+
+    # Create a new entry
+    entry = { 'id': db_entry_generate_id(),
+              'url': url,
+              'title': title if title else page_title(url),
+              'tags': list(sorted(dict.fromkeys(tags))),  # Remove duplicate tags
+              'created_date': datetime.datetime.utcnow(),
+              'extended': extended }
+
+    # Launch editor to allow user to finalize data
+    entry_list = [ entry ]
+    if use_editor:
+        entry_list = db_entry_list_edit(entry_list)
+
+    return entry_list
+
+def db_entry_list_edit(entry_list):
+    """ Edit a list of entries """
+    # Map the internal format entries to external edit-doc format
+    doc_list = [ db_entry_to_editdoc(entry) for entry in entry_list ]
+
+    # Convert the edit-doc list to YAML format and launch the editor
+    yaml_edited = click.edit(yaml.dump_all(doc_list),
+                             extension='.yaml',
+                             require_save=True)
+    if yaml_edited is None:
+        return None
+
+    # Map the post-edited external format back to internal format
+    doc_list = yaml.safe_load_all(yaml_edited)
+    entry_list = [ db_entry_from_editdoc(doc) for doc in doc_list ]
+    return entry_list
+
+def db_entry_list_update(db_entry_list, entry_list):
+    """ Add/update entries in the database """
+    changed_list = []
+    for new_entry in entry_list:
+        found = False
+        for pos, old_entry in enumerate(db_entry_list):
+            if old_entry['id'] == new_entry['id']:
+                found = True
+                changed = False
+                for key in old_entry:
+                    if not key in new_entry:
+                        changed = True
+                        break
+                    if old_entry[key] != new_entry[key]:
+                        changed = True
+                        break
+                for key in new_entry:
+                    if not key in old_entry:
+                        changed = True
+                        break
+                    if old_entry[key] != new_entry[key]:
+                        changed = True
+                        break
+                if changed:
+                    db_entry_list[pos] = new_entry
+                    changed_list.append(new_entry)
+                break
+        if not found:
+            db_entry_list.append(new_entry)
+            changed_list.append(new_entry)
+
+    return changed_list if len(changed_list) > 0 else None
+
+def db_entry_list_search(db_entry_list, search_args, show_soft_deleted=False):
+    """ Find matching entries in the database """
+    # Parse the search args
+    search_all_list = []
+    search_not_list = []
+    search_any_list = []
+    for arg in search_args:
+        if arg[0] == "+":
+            search_all_list.append(arg[1:])
+        elif arg[0] == "-":
+            search_not_list.append(arg[1:])
+        else:
+            search_any_list.append(arg)
+
+    # Build list of matching entries
+    entry_list = []
+    for entry in db_entry_list:
+        # Hide soft-deleted entries by default
+        if entry.get('soft_deleted', False) and not show_soft_deleted:
+            continue
+
+        # Filter by search_args
+        if len(search_not_list) > 0:
+            if any(db_entry_search_match(entry, search_arg) for search_arg in search_not_list):
+                continue
+        if len(search_all_list) > 0:
+            if not all(db_entry_search_match(entry, search_arg) for search_arg in search_all_list):
+                continue
+        if len(search_any_list) > 0:
+            if not any(db_entry_search_match(entry, search_arg) for search_arg in search_any_list):
+                continue
+
+        entry_list.append(entry)
+
+    return entry_list if len(entry_list) > 0 else None
+
+def db_entry_search_match(entry, search_arg):
+    """ Check if this entry matches the given search_arg """
     if search_arg[0:6] == "title:":
         val = search_arg[6:]
-        return (val.lower() in index_entry['title'].lower() if len(val) > 0 else len(index_entry['title']) == 0)
+        return (val.lower() in entry['title'].lower() if len(val) > 0 else len(entry['title']) == 0)
     elif search_arg[0:4] == "tag:":
         val = search_arg[4:]
-        return (any(val.lower() in tag.lower() for tag in index_entry['tags']) if len(val) > 0 else len(index_entry['tags']) == 0)
+        return (any(val.lower() in tag.lower() for tag in entry['tags']) if len(val) > 0 else len(entry['tags']) == 0)
     elif search_arg[0:5] == "site:":
         val = search_arg[5:]
-        url_domain = "{0.netloc}".format(urllib.parse.urlsplit(index_entry['url']))
+        url_domain = "{0.netloc}".format(urllib.parse.urlsplit(entry['url']))
         return (val.lower() in url_domain.lower() if len(val) > 0 else len(url_domain) == 0)
     elif search_arg[0:4] == "url:":
         val = search_arg[4:]
-        return (val.lower() in index_entry['url'].lower() if len(val) > 0 else len(index_entry['url']) == 0)
+        return (val.lower() in entry['url'].lower() if len(val) > 0 else len(entry['url']) == 0)
     elif search_arg[0:3] == "id:":
         val = search_arg[3:]
-        return (val.lower() in index_entry['id'][0:len(val)].lower() if len(val) > 0 else len(index_entry['id']) == 0)
+        return (val.lower() in entry['id'][0:len(val)].lower() if len(val) > 0 else len(entry['id']) == 0)
     else:
-        string = "{} {} {} {}".format(index_entry['id'],
-                                      index_entry['title'],
-                                      index_entry['url'],
-                                      index_entry['tags'])
+        string = "{} {} {} {}".format(entry['id'],
+                                      entry['title'],
+                                      entry['url'],
+                                      entry['tags'])
         return (search_arg.lower() in string.lower())
+
+def db_entry_print(entry_list, format=''):
+    """ Print entries based on 'format' template """
+    format = format or "#[fg=yellow]%shortid#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
+    format_line = format_colorize(format)  # Evaluate style mnemonics ahead of time
+
+    for entry in entry_list:
+        # Build the final output line based on the 'format' template
+        line = format_line
+        subs = [ ('%shortid', entry['id'][0:8]),
+                 ('%id', entry['id']),
+                 ('%url', entry['url']),
+                 ('%title', entry['title']),
+                 ('%tags', ','.join(entry['tags'])),
+                 ('%created_date', datetime_utc_to_local(entry['created_date']).strftime('%Y-%m-%d %H:%M:%S %Z')),
+                 ('%created_ago', datetime_format_relative(entry['created_date'])) ]
+        for search, replacement in subs:
+            line = line.replace(search, replacement)
+        click.echo(line)
 
 
 
@@ -138,7 +335,7 @@ def datetime_utc_to_local(utc_dt):
 
 def datetime_format_relative(utc_dt):
     """ Format date relative to the current time, e.g. "2 hours ago" """
-    delta = datetime.datetime.utcnow() - utc_dt
+    delta = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - utc_dt
     if delta.days < 2:
         seconds = (delta.days * 86400) + delta.seconds
         minutes = seconds // 60
@@ -235,6 +432,34 @@ def format_colorize(format):
         retval=format
     return retval
 
+def page_title(url):
+    """ Get webpage title """
+    user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
+    rqst = urllib.request.Request(url)
+    rqst.add_header('User-Agent', user_agent)
+    try:
+        page = bs4.BeautifulSoup(urllib.request.urlopen(rqst), "html.parser")
+        if page.title:
+            return page.title.string.strip().encode('utf-8')
+    except urllib.request.HTTPError as e:
+        return "{} {}".format(e.code, e.reason)
+    except urllib.request.URLError as e:
+        return "urlopen error: {}".format(e.reason)
+
+
+
+###
+### YAML helpers
+###
+
+def yaml_represent_OrderedDict(dumper, data):
+    """ Representer for collections.OrderedDict, for yaml.dump """
+    return dumper.represent_mapping(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        data.items())
+
+yaml.add_representer(collections.OrderedDict, yaml_represent_OrderedDict)
+
 
 
 ###
@@ -250,42 +475,81 @@ def cli():
     """
     pass
 
-#@cli.command(name='add',
-#             short_help='Add new entry')
-#@click.option('--title', 'title', metavar='TITLE', help='Title, by default webpage title will be fetched')
-#@click.option('--tags', 'tags', metavar='TAGS', help='Space-delimited list of tags')
-#@click.option('--comment', 'comment', metavar='TEXT', help='Comments')
-#@click.option('--cache-webpage', 'cache_webpage', is_flag=True, help='Archive a cached copy of this webpage')
-##@click.option('--no-edit', 'no_edit', is_flag=True, help='Suppress launching $EDITOR to edit new entry file')
-##@click.option('--created-on', 'created_on', metavar='DATE', help='Override creation date')
-##@click.option('--id', 'id', metavar='ID', help='Override internal ID')
-#@click.argument('url', required=True)
-#def command_add(url, id, title, tags, comment, created_on, cache_webpage, no_edit):
-#    """
-#    Add a new bookmark to the database using $EDITOR
-#    """
-#    click.echo("add: url=%s, title=%s, tags=%s, comment=%s" % (url, title, tags, comment))
+@cli.command(name='add', short_help='Add new entry')
+@click.option('--title', 'title', metavar='TITLE',
+        help='Title, by default webpage title will be fetched')
+@click.option('--tags', 'tags', metavar='TAGS',
+        help='Comma separated list of tags')
+@click.option('--extended', 'extended', metavar='TEXT',
+        help='Extended comments/notes')
+#@click.option('--archive-webpage', 'archive_webpage', is_flag=True,
+#        help='Archive a cached copy of this webpage')
+@click.option('--no-edit', 'no_edit', is_flag=True,
+        help='Suppress launching $EDITOR to edit new entry file')
+@click.argument('url', required=True)
+def command_add(url, title, tags, extended, no_edit):
+    """
+    Add a new bookmark to the database using $EDITOR
+    """
+    db_entry_list = db_load_db()
+    entry_list = db_entry_add(db_entry_list,
+                              url,
+                              title,
+                              [ tag.strip() for tag in tags.split(',')],
+                              extended,
+                              use_editor=False if no_edit else True)
+    if entry_list is None:
+        sys.exit('User aborted')
 
-#@cli.command(name='edit',
-#             short_help='Edit existing entry')
-#@click.argument('id', required=True, nargs=-1)
-#def command_edit(id):
-#    """
-#    Edit an existing bookmark in the database using $EDITOR
-#    """
-#    click.echo("edit")
+    # Update the database with the new entry
+    changed_list = db_entry_list_update(db_entry_list, entry_list)
+    if changed_list is None:
+        sys.exit('No changes found')
+
+    db_save_db(db_entry_list)
+    db_entry_print(changed_list)
+
+@cli.command(name='edit', short_help='Edit existing entry')
+@click.option('-a', '--all', 'show_soft_deleted', is_flag=True,
+        help='All entries, including soft-deleted entries')
+@click.argument('search_args', metavar='[ID]...', nargs=-1)
+def command_edit(search_args, show_soft_deleted):
+    """
+    Edit existing bookmarks in the database using $EDITOR
+    """
+    db_entry_list = db_load_db()
+    entry_list = db_entry_list_search(db_entry_list, search_args, show_soft_deleted=show_soft_deleted)
+    if entry_list is None:
+        sys.exit('No selected entries')
+
+    click.echo('{} entries to edit'.format(len(entry_list)))
+    if len(entry_list) > 5 and not click.confirm('Do you want to continue?'):
+        sys.exit('User aborted')
+    entry_list = db_entry_list_edit(entry_list)
+    if entry_list is None:
+        sys.exit('User aborted')
+
+    # Update the database with the new entry
+    changed_list = db_entry_list_update(db_entry_list, entry_list)
+    if changed_list is None:
+        sys.exit('No changes found')
+
+    db_save_db(db_entry_list)
+    db_entry_print(changed_list)
 
 #@cli.command(name='grep', short_help='Find entries by grep\'ing through cached webpage')
 #def command_grep():
 #    click.echo("grep")
 
-@cli.command(name='list',
-             short_help='List entries')
-@click.option('-a', '--all', 'show_all', is_flag=True, help='All entries, including soft-deleted entries')
-@click.option('-s', '--sort', 'sort_field', type=click.Choice(['id','url','title','tags','created_on']), default='created_on', help='Sort list by entry field')
-@click.option('-f', '--format', 'format', metavar='FORMAT', help='Custom output format')
+@cli.command(name='list', short_help='List entries')
+@click.option('-a', '--all', 'show_soft_deleted', is_flag=True,
+        help='All entries, including soft-deleted entries')
+@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS), default='created_date',
+        help='Sort list by entry field')
+@click.option('-f', '--format', 'format', metavar='FORMAT',
+        help='Custom output format')
 @click.argument('search_args', metavar='[TEXT]...', nargs=-1)
-def command_list(search_args, show_all, sort_field, format):
+def command_list(search_args, show_soft_deleted, sort_key, format):
     """
     List all entries, or search for matching entries.
 
@@ -311,58 +575,15 @@ def command_list(search_args, show_all, sort_field, format):
     argument as the separator for options and arguments, which is the
     POSIX convention.
     """
-    if not db_exists():
-        sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
+    db_entry_list = db_load_db()
+    entry_list = db_entry_list_search(db_entry_list, search_args, show_soft_deleted=show_soft_deleted)
+    if entry_list is None:
+        #sys.exit('No selected entries')
+        sys.exit()
 
-    # Define output line format
-    #format = format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[bold]#[fg=black](%tags)#[none]"
-    format = format or "#[fg=yellow]%id_short#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
-    format_line = format_colorize(format)  # Evaluate style mnemonics ahead of time
-
-    search_all_list = []
-    search_not_list = []
-    search_any_list = []
-    for arg in search_args:
-        if arg[0] == "+":
-            search_all_list.append(arg[1:])
-        elif arg[0] == "-":
-            search_not_list.append(arg[1:])
-        else:
-            search_any_list.append(arg)
-
-    for index_line in sh.sort(sh.cat(os.path.join(LINKPAD_DB, 'index')),
-                              field_separator='\t',
-                              key=str(DB_INDEXFILE_FIELDS.get(sort_field))):
-        index_entry = db_entry_externalize(db_index_parse_row(index_line))
-
-        # Hide soft-deleted entries by default
-        if index_entry['soft_deleted'] == 'true' and not show_all:
-            continue
-
-        # Filter by search_args
-        if len(search_not_list) > 0:
-            if any(db_entry_search_match(index_entry, search_arg) for search_arg in search_not_list):
-                continue
-        if len(search_all_list) > 0:
-            if not all(db_entry_search_match(index_entry, search_arg) for search_arg in search_all_list):
-                continue
-        if len(search_any_list) > 0:
-            if not any(db_entry_search_match(index_entry, search_arg) for search_arg in search_any_list):
-                continue
-
-        # Build the final output line based on the 'format' template
-        entry_line = format_line
-        subs = [
-            ('%id_short', index_entry['id'][0:8]),
-            ('%id', index_entry['id']),
-            ('%url', index_entry['url']),
-            ('%title', index_entry['title']),
-            ('%tags', ','.join(index_entry['tags'])),
-            ('%created_on', index_entry['created_on'].strftime('%Y-%m-%d %H:%M:%S %Z')),
-            ('%created_ago', datetime_format_relative(index_entry['created_on']))]
-        for search, replacement in subs:
-            entry_line = entry_line.replace(search, replacement)
-        click.echo(entry_line)
+    # Display match entries, sorted by sort_key
+    entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
+    db_entry_print(entry_list)
 
 #@cli.command(name='remove',
 #             short_help='Remove entry')
@@ -413,7 +634,7 @@ def command_database_name(full_path):
     """
     Show current database name
     """
-    click.echo(LINKPAD_DB if full_path else LINKPAD_DBNAME)
+    click.echo(LINKPAD_DBPATH if full_path else LINKPAD_DBNAME)
 
 @command_database.command(name='list')
 @click.option('-f', '--full', 'full_path', is_flag=True, help='Print full filepath')
