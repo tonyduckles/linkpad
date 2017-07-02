@@ -22,6 +22,7 @@
 import os
 import sys
 import collections
+import copy
 import click
 import yaml
 import json
@@ -110,10 +111,10 @@ def db_save_db(db_entry_list):
         # JSON encode each entry individually so we can enforce
         # newlines between each row
         first = True
-        for entry in db_entry_list:
+        for entry in sorted(db_entry_list, key=lambda entry: entry['created_date']):
             f.write('[' if first else ',\n')
             first = False
-            f.write(json.dumps(db_entry_externalize(entry), separators=(',', ':')))
+            f.write(json.dumps(db_entry_externalize(copy.deepcopy(entry)), separators=(',', ':')))
         f.write(']')
 
 def db_entry_get(db_entry_list, url):
@@ -127,26 +128,19 @@ def db_entry_generate_id():
     """ Generate a new uuid for a new entry """
     return str(uuid.uuid4()).lower().replace('-','')
 
-def db_entry_externalize(entry_internal, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime_as_local=False):
+def db_entry_externalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime_as_local=False):
     """ Convert an entry dict from internal to external format """
-    entry_external = {}
-    for key in entry_internal:
-        entry_external[key] = entry_internal[key]
-    created_dt = entry_internal['created_date'].replace(tzinfo=datetime.timezone.utc)
+    created_dt = entry['created_date'].replace(tzinfo=datetime.timezone.utc)
     if datetime_as_local:
         created_dt = datetime_utc_to_local(created_dt)
-    entry_external['created_date'] = created_dt.strftime(datetime_format)
-    return entry_external
+    entry['created_date'] = created_dt.strftime(datetime_format)
+    return entry
 
-def db_entry_internalize(entry_external, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
+def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     """ Convert an entry dict from external to internal format """
-    entry_internal = {}
-    for key in entry_external:
-        entry_internal[key] = entry_external[key]
-    entry_internal['created_date'] = datetime.datetime.strptime(
-            entry_external['created_date'],
-            datetime_format).astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
-    return entry_internal
+    created_dt = datetime.datetime.strptime(entry['created_date'], datetime_format)
+    entry['created_date'] = created_dt.astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
+    return entry
 
 def db_entry_to_editdoc(entry, datetime_format='%Y-%m-%d %H:%M:%S %z', datetime_as_local=True):
     """ Return an OrderedDict containing the editable fields for an entry, for user-editing """
@@ -170,7 +164,7 @@ def db_entry_from_editdoc(doc, datetime_format='%Y-%m-%d %H:%M:%S %z'):
 
     return db_entry_internalize(entry, datetime_format)
 
-def db_entry_add(db_entry_list, url, title='', tags=[], extended='', use_editor=True):
+def db_entry_add(db_entry_list, url, title, tags, extended, use_editor=True):
     """ Add a new entry to the database """
     # If we already have an entry with this same url, abort
     match = db_entry_get(db_entry_list, url)
@@ -180,10 +174,10 @@ def db_entry_add(db_entry_list, url, title='', tags=[], extended='', use_editor=
     # Create a new entry
     entry = { 'id': db_entry_generate_id(),
               'url': url,
-              'title': title if title else page_title(url),
-              'tags': list(sorted(dict.fromkeys(tags))),  # Remove duplicate tags
+              'title': title if title is not None else page_title(url),
+              'tags': list(sorted(dict.fromkeys(tags))) if tags is not None else [],  # Remove duplicate tags
               'created_date': datetime.datetime.utcnow(),
-              'extended': extended }
+              'extended': extended is not None else '' }
 
     # Launch editor to allow user to finalize data
     entry_list = [ entry ]
@@ -440,7 +434,7 @@ def page_title(url):
     try:
         page = bs4.BeautifulSoup(urllib.request.urlopen(rqst), "html.parser")
         if page.title:
-            return page.title.string.strip().encode('utf-8')
+            return page.title.string.strip()
     except urllib.request.HTTPError as e:
         return "{} {}".format(e.code, e.reason)
     except urllib.request.URLError as e:
@@ -463,7 +457,7 @@ yaml.add_representer(collections.OrderedDict, yaml_represent_OrderedDict)
 
 
 ###
-### Main command-line entry point
+### Main command-line entry point: "$PROGRAM ..."
 ###
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
@@ -495,7 +489,7 @@ def command_add(url, title, tags, extended, no_edit):
     entry_list = db_entry_add(db_entry_list,
                               url,
                               title,
-                              [ tag.strip() for tag in tags.split(',')],
+                              [ tag.strip() for tag in tags.split(',') ] if tags is not None else [],
                               extended,
                               use_editor=False if no_edit else True)
     if entry_list is None:
@@ -506,7 +500,14 @@ def command_add(url, title, tags, extended, no_edit):
     if changed_list is None:
         sys.exit('No changes found')
 
+    # Save results
     db_save_db(db_entry_list)
+    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
+    _git.add(os.path.join(LINKPAD_DBPATH, 'bookmarks.json'))
+    commit_desc = 'Add \'{}\''.format(changed_list[0]['url'])
+    _git.commit('-q', '-m', commit_desc)
+
+    # Display changed entries
     db_entry_print(changed_list)
 
 @cli.command(name='edit', short_help='Edit existing entry')
@@ -534,7 +535,14 @@ def command_edit(search_args, show_soft_deleted):
     if changed_list is None:
         sys.exit('No changes found')
 
+    # Save results
     db_save_db(db_entry_list)
+    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
+    _git.add(os.path.join(LINKPAD_DBPATH, 'bookmarks.json'))
+    commit_desc = 'Edit \'{}\''.format(' '.join(search_args))
+    _git.commit('-q', '-m', commit_desc)
+
+    # Display changed entries
     db_entry_print(changed_list)
 
 #@cli.command(name='grep', short_help='Find entries by grep\'ing through cached webpage')
@@ -544,7 +552,8 @@ def command_edit(search_args, show_soft_deleted):
 @cli.command(name='list', short_help='List entries')
 @click.option('-a', '--all', 'show_soft_deleted', is_flag=True,
         help='All entries, including soft-deleted entries')
-@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS), default='created_date',
+@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
+        default='created_date', show_default=True,
         help='Sort list by entry field')
 @click.option('-f', '--format', 'format', metavar='FORMAT',
         help='Custom output format')
@@ -618,10 +627,9 @@ def command_list(search_args, show_soft_deleted, sort_key, format):
 def command_version():
     click.echo("{} {}".format(PROGRAM, VERSION))
 
-@cli.command(name='printf')
-@click.argument('format', required=True)
-def command_printf(format):
-    click.echo(format_colorize(format))
+###
+### Command-line: "$PROGRAM database ..."
+###
 
 @cli.group(name='database', short_help='Database management')
 def command_database():
