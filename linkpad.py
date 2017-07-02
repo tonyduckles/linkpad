@@ -41,6 +41,8 @@ http.client._MAXHEADERS = 1000
 VERSION = 0.1
 PROGRAM = os.path.basename(sys.argv[0])
 
+USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
+
 LINKPAD_BASEDIR = os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.linkpad')
 LINKPAD_DBNAME = os.environ.get('LINKPAD_DBNAME') or "default"
 LINKPAD_DBPATH = os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
@@ -244,7 +246,7 @@ def db_entry_list_update(db_entry_list, entry_list):
 
     return changed_list if len(changed_list) > 0 else None
 
-def db_entry_list_search(db_entry_list, search_args, show_soft_deleted=False):
+def db_entry_list_search(db_entry_list, search_args, include_soft_deleted=False):
     """ Find matching entries in the database """
     # Parse the search args
     search_all_list = []
@@ -262,7 +264,7 @@ def db_entry_list_search(db_entry_list, search_args, show_soft_deleted=False):
     entry_list = []
     for entry in db_entry_list:
         # Hide soft-deleted entries by default
-        if entry.get('soft_deleted', False) and not show_soft_deleted:
+        if entry.get('soft_deleted', False) and not include_soft_deleted:
             continue
 
         # Filter by search_args
@@ -436,9 +438,8 @@ def format_colorize(format):
 
 def page_title(url):
     """ Get webpage title """
-    user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
     rqst = urllib.request.Request(url)
-    rqst.add_header('User-Agent', user_agent)
+    rqst.add_header('User-Agent', USER_AGENT)
     try:
         page = bs4.BeautifulSoup(urllib.request.urlopen(rqst), "html.parser")
         if page.title:
@@ -519,15 +520,15 @@ def command_add(url, title, tags, extended, no_edit):
     db_entry_print(changed_list)
 
 @cli.command(name='edit', short_help='Edit existing entry')
-@click.option('-a', '--all', 'show_soft_deleted', is_flag=True,
+@click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
         help='All entries, including soft-deleted entries')
 @click.argument('search_args', metavar='[ID]...', nargs=-1)
-def command_edit(search_args, show_soft_deleted):
+def command_edit(search_args, include_soft_deleted):
     """
     Edit existing bookmarks in the database using $EDITOR
     """
     db_entry_list = db_load_db()
-    entry_list = db_entry_list_search(db_entry_list, search_args, show_soft_deleted=show_soft_deleted)
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
     if entry_list is None:
         sys.exit('No selected entries')
 
@@ -558,7 +559,7 @@ def command_edit(search_args, show_soft_deleted):
 #    click.echo("grep")
 
 @cli.command(name='list', short_help='List entries')
-@click.option('-a', '--all', 'show_soft_deleted', is_flag=True,
+@click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
         help='All entries, including soft-deleted entries')
 @click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
         default='created_date', show_default=True,
@@ -566,7 +567,7 @@ def command_edit(search_args, show_soft_deleted):
 @click.option('-f', '--format', 'format', metavar='FORMAT',
         help='Custom output format')
 @click.argument('search_args', metavar='[TEXT]...', nargs=-1)
-def command_list(search_args, show_soft_deleted, sort_key, format):
+def command_list(search_args, include_soft_deleted, sort_key, format):
     """
     List all entries, or search for matching entries.
 
@@ -593,7 +594,7 @@ def command_list(search_args, show_soft_deleted, sort_key, format):
     POSIX convention.
     """
     db_entry_list = db_load_db()
-    entry_list = db_entry_list_search(db_entry_list, search_args, show_soft_deleted=show_soft_deleted)
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
     if entry_list is None:
         #sys.exit('No selected entries')
         sys.exit()
@@ -764,7 +765,7 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
     _git.add(os.path.join(LINKPAD_DBPATH, 'bookmarks.json'))
-    commit_desc = 'Import {}'.format(click.format_filename(jsonfile, shorten=True))
+    commit_desc = 'Import pinboard-json \'{}\''.format(click.format_filename(jsonfile, shorten=True))
     _git.commit('-q', '-m', commit_desc)
 
 if __name__ == '__main__':
