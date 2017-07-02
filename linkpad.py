@@ -60,6 +60,143 @@ DB_ENTRY_OPTIONAL_FIELDS = [ 'archived',
 
 
 ###
+### Misc helpers
+###
+
+def datetime_utc_to_local(utc_dt):
+    """ Convert a UTC datetime to local datetime """
+    # https://stackoverflow.com/a/13287083
+    return utc_dt.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
+
+def datetime_format_relative(utc_dt):
+    """ Format date relative to the current time, e.g. "2 hours ago" """
+    delta = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - utc_dt
+    if delta.days < 2:
+        seconds = (delta.days * 86400) + delta.seconds
+        minutes = seconds // 60
+        hours = minutes // 60
+        if seconds < 120:
+            return "{} seconds ago".format(seconds)
+        if minutes < 120:
+            return "{} minutes ago".format(minutes)
+        return "{} hours ago".format(hours)
+    else:
+        days = delta.days
+        weeks = days // 7
+        months = int(days / (365/12))
+        years = days // 365
+        if days < 14:
+            return "{} days ago".format(days)
+        if weeks < 8:
+            return "{} weeks ago".format(weeks)
+        if years < 1:
+            return "{} months ago".format(months)
+        months_mod = months % 12
+        return "{} years, {} months ago".format(years, months_mod) if months_mod > 0 else "{} years ago".format(years)
+
+def format_colorize(format):
+    """
+    Given a format template string, replace any format mnemonics
+    with literal ANSI color escape sequences.
+
+    Support Tmux-style formatting strings: #[...]
+    """
+    retval=""
+    if '#[' in format:
+        pos1=0
+        pos2=0
+        pos3=format.find('#[', pos1)  # Find first format-start marker
+        retval += format[pos1:pos3]   # Append any text before the first format-start marker
+        while True:
+            pos1 = pos3
+            pos2 = format.find(']', pos1+2)  # Find next format-end marker
+            if pos2 < 0:
+                retval += format[pos1:]  # No counterpart format-end marker, just append remainder of string
+                break
+            for style in format[pos1+2:pos2].split(','):
+                # styles
+                if style == 'none': retval += "\x1b[0m"
+                if style == 'bold': retval += "\x1b[1m"
+                if style == 'bright': retval += "\x1b[1m"
+                if style == 'dim': retval += "\x1b[2m"
+                if style == 'italics': retval += "\x1b[3m"
+                if style == 'underscore': retval += "\x1b[4m"
+                if style == 'blink': retval += "\x1b[5m"
+                if style == 'reverse': retval += "\x1b[7m"
+                # foreground
+                if style == 'fg=black': retval += "\x1b[30m"
+                if style == 'fg=red': retval += "\x1b[31m"
+                if style == 'fg=green': retval += "\x1b[32m"
+                if style == 'fg=yellow': retval += "\x1b[33m"
+                if style == 'fg=blue': retval += "\x1b[34m"
+                if style == 'fg=magenta': retval += "\x1b[35m"
+                if style == 'fg=cyan': retval += "\x1b[36m"
+                if style == 'fg=white': retval += "\x1b[37m"
+                if style == 'fg=default': retval += "\x1b[39m"
+                if style == 'fg=brightblack': retval += "\x1b[90m"
+                if style == 'fg=brightred': retval += "\x1b[91m"
+                if style == 'fg=brightgreen': retval += "\x1b[92m"
+                if style == 'fg=brightyellow': retval += "\x1b[93m"
+                if style == 'fg=brightblue': retval += "\x1b[94m"
+                if style == 'fg=brightmagenta': retval += "\x1b[95m"
+                if style == 'fg=brightcyan': retval += "\x1b[96m"
+                if style == 'fg=brightwhite': retval += "\x1b[97m"
+                # background
+                if style == 'bg=black': retval += "\x1b[40m"
+                if style == 'bg=red': retval += "\x1b[41m"
+                if style == 'bg=green': retval += "\x1b[42m"
+                if style == 'bg=yellow': retval += "\x1b[43m"
+                if style == 'bg=blue': retval += "\x1b[44m"
+                if style == 'bg=magenta': retval += "\x1b[45m"
+                if style == 'bg=cyan': retval += "\x1b[46m"
+                if style == 'bg=white': retval += "\x1b[47m"
+                if style == 'bg=default': retval += "\x1b[49m"
+                if style == 'bg=brightblack': retval += "\x1b[100m"
+                if style == 'bg=brightred': retval += "\x1b[101m"
+                if style == 'bg=brightgreen': retval += "\x1b[102m"
+                if style == 'bg=brightyellow': retval += "\x1b[103m"
+                if style == 'bg=brightblue': retval += "\x1b[104m"
+                if style == 'bg=brightmagenta': retval += "\x1b[105m"
+                if style == 'bg=brightcyan': retval += "\x1b[106m"
+                if style == 'bg=brightwhite': retval += "\x1b[107m"
+            pos3 = format.find('#[',pos2+1)  # Find next format-start marker
+            retval += format[pos2+1:pos3 if (pos3 > 0) else None]  # Append text between current format-end and next format-start marker
+            if pos3 < 0:
+                break
+    else:
+        retval=format
+    return retval
+
+def page_title(url):
+    """ Get webpage title """
+    rqst = urllib.request.Request(url)
+    rqst.add_header('User-Agent', USER_AGENT)
+    try:
+        page = bs4.BeautifulSoup(urllib.request.urlopen(rqst), "html.parser")
+        if page.title:
+            return page.title.string.strip()
+    except urllib.request.HTTPError as e:
+        return "{} {}".format(e.code, e.reason)
+    except urllib.request.URLError as e:
+        return "urlopen error: {}".format(e.reason)
+
+
+
+###
+### YAML helpers
+###
+
+def yaml_represent_OrderedDict(dumper, data):
+    """ Representer for collections.OrderedDict, for yaml.dump """
+    return dumper.represent_mapping(
+        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+        data.items())
+
+yaml.add_representer(collections.OrderedDict, yaml_represent_OrderedDict)
+
+
+
+###
 ### Database utilities
 ###
 
@@ -325,143 +462,6 @@ def db_entry_print(entry_list, format=''):
         for search, replacement in subs:
             line = line.replace(search, replacement)
         click.echo(line)
-
-
-
-###
-### Misc utilities
-###
-
-def datetime_utc_to_local(utc_dt):
-    """ Convert a UTC datetime to local datetime """
-    # https://stackoverflow.com/a/13287083
-    return utc_dt.replace(tzinfo=datetime.timezone.utc).astimezone(tz=None)
-
-def datetime_format_relative(utc_dt):
-    """ Format date relative to the current time, e.g. "2 hours ago" """
-    delta = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - utc_dt
-    if delta.days < 2:
-        seconds = (delta.days * 86400) + delta.seconds
-        minutes = seconds // 60
-        hours = minutes // 60
-        if seconds < 120:
-            return "{} seconds ago".format(seconds)
-        if minutes < 120:
-            return "{} minutes ago".format(minutes)
-        return "{} hours ago".format(hours)
-    else:
-        days = delta.days
-        weeks = days // 7
-        months = int(days / (365/12))
-        years = days // 365
-        if days < 14:
-            return "{} days ago".format(days)
-        if weeks < 8:
-            return "{} weeks ago".format(weeks)
-        if years < 1:
-            return "{} months ago".format(months)
-        months_mod = months % 12
-        return "{} years, {} months ago".format(years, months_mod) if months_mod > 0 else "{} years ago".format(years)
-
-def format_colorize(format):
-    """
-    Given a format template string, replace any format mnemonics
-    with literal ANSI color escape sequences.
-
-    Support Tmux-style formatting strings: #[...]
-    """
-    retval=""
-    if '#[' in format:
-        pos1=0
-        pos2=0
-        pos3=format.find('#[', pos1)  # Find first format-start marker
-        retval += format[pos1:pos3]   # Append any text before the first format-start marker
-        while True:
-            pos1 = pos3
-            pos2 = format.find(']', pos1+2)  # Find next format-end marker
-            if pos2 < 0:
-                retval += format[pos1:]  # No counterpart format-end marker, just append remainder of string
-                break
-            for style in format[pos1+2:pos2].split(','):
-                # styles
-                if style == 'none': retval += "\x1b[0m"
-                if style == 'bold': retval += "\x1b[1m"
-                if style == 'bright': retval += "\x1b[1m"
-                if style == 'dim': retval += "\x1b[2m"
-                if style == 'italics': retval += "\x1b[3m"
-                if style == 'underscore': retval += "\x1b[4m"
-                if style == 'blink': retval += "\x1b[5m"
-                if style == 'reverse': retval += "\x1b[7m"
-                # foreground
-                if style == 'fg=black': retval += "\x1b[30m"
-                if style == 'fg=red': retval += "\x1b[31m"
-                if style == 'fg=green': retval += "\x1b[32m"
-                if style == 'fg=yellow': retval += "\x1b[33m"
-                if style == 'fg=blue': retval += "\x1b[34m"
-                if style == 'fg=magenta': retval += "\x1b[35m"
-                if style == 'fg=cyan': retval += "\x1b[36m"
-                if style == 'fg=white': retval += "\x1b[37m"
-                if style == 'fg=default': retval += "\x1b[39m"
-                if style == 'fg=brightblack': retval += "\x1b[90m"
-                if style == 'fg=brightred': retval += "\x1b[91m"
-                if style == 'fg=brightgreen': retval += "\x1b[92m"
-                if style == 'fg=brightyellow': retval += "\x1b[93m"
-                if style == 'fg=brightblue': retval += "\x1b[94m"
-                if style == 'fg=brightmagenta': retval += "\x1b[95m"
-                if style == 'fg=brightcyan': retval += "\x1b[96m"
-                if style == 'fg=brightwhite': retval += "\x1b[97m"
-                # background
-                if style == 'bg=black': retval += "\x1b[40m"
-                if style == 'bg=red': retval += "\x1b[41m"
-                if style == 'bg=green': retval += "\x1b[42m"
-                if style == 'bg=yellow': retval += "\x1b[43m"
-                if style == 'bg=blue': retval += "\x1b[44m"
-                if style == 'bg=magenta': retval += "\x1b[45m"
-                if style == 'bg=cyan': retval += "\x1b[46m"
-                if style == 'bg=white': retval += "\x1b[47m"
-                if style == 'bg=default': retval += "\x1b[49m"
-                if style == 'bg=brightblack': retval += "\x1b[100m"
-                if style == 'bg=brightred': retval += "\x1b[101m"
-                if style == 'bg=brightgreen': retval += "\x1b[102m"
-                if style == 'bg=brightyellow': retval += "\x1b[103m"
-                if style == 'bg=brightblue': retval += "\x1b[104m"
-                if style == 'bg=brightmagenta': retval += "\x1b[105m"
-                if style == 'bg=brightcyan': retval += "\x1b[106m"
-                if style == 'bg=brightwhite': retval += "\x1b[107m"
-            pos3 = format.find('#[',pos2+1)  # Find next format-start marker
-            retval += format[pos2+1:pos3 if (pos3 > 0) else None]  # Append text between current format-end and next format-start marker
-            if pos3 < 0:
-                break
-    else:
-        retval=format
-    return retval
-
-def page_title(url):
-    """ Get webpage title """
-    rqst = urllib.request.Request(url)
-    rqst.add_header('User-Agent', USER_AGENT)
-    try:
-        page = bs4.BeautifulSoup(urllib.request.urlopen(rqst), "html.parser")
-        if page.title:
-            return page.title.string.strip()
-    except urllib.request.HTTPError as e:
-        return "{} {}".format(e.code, e.reason)
-    except urllib.request.URLError as e:
-        return "urlopen error: {}".format(e.reason)
-
-
-
-###
-### YAML helpers
-###
-
-def yaml_represent_OrderedDict(dumper, data):
-    """ Representer for collections.OrderedDict, for yaml.dump """
-    return dumper.represent_mapping(
-        yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
-        data.items())
-
-yaml.add_representer(collections.OrderedDict, yaml_represent_OrderedDict)
 
 
 
