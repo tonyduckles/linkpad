@@ -138,8 +138,16 @@ def db_entry_externalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime
 
 def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     """ Convert an entry dict from external to internal format """
+    entry = db_entry_internalize_trim(entry)  # Remove empty optional fields
     created_dt = datetime.datetime.strptime(entry['created_date'], datetime_format)
     entry['created_date'] = created_dt.astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
+    return entry
+
+def db_entry_internalize_trim(entry):
+    """ Remove empty optional fields from an internal-format entry """
+    for key in DB_ENTRY_OPTIONAL_FIELDS:
+        if key in entry and len(entry[key]) == 0:
+            del entry[key]
     return entry
 
 def db_entry_to_editdoc(entry, datetime_format='%Y-%m-%d %H:%M:%S %z', datetime_as_local=True):
@@ -715,6 +723,7 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
             'created_date': datetime.datetime.strptime(
                 import_item['time'],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
             }
+        import_entry = db_entry_internalize_trim(import_entry)
 
         # If there's an existing entry with this same url, update that entry instead
         matches = [ entry for entry in db_entry_list if import_entry['url'] == entry['url'] ]
