@@ -608,28 +608,29 @@ def command_list(search_args, include_soft_deleted, sort_key, format):
 #def command_remove():
 #    click.echo("remove")
 
-#@cli.command(name='search',
-#             short_help='Find entries by keyword')
-#def command_search():
-#    click.echo("search")
+@cli.command(name='show',
+             short_help='Show entry contents')
+@click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
+        help='All entries, including soft-deleted entries')
+@click.argument('search_args', metavar='[ID]...', nargs=-1)
+def command_show(search_args, include_soft_deleted):
+    """ Show the contents of matching entries """
+    db_entry_list = db_load_db()
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
+    if entry_list is None:
+        #sys.exit('No selected entries')
+        sys.exit()
 
-#@cli.command(name='show',
-#             short_help='Show entry contents')
-#def command_show():
-#    click.echo("show")
+    # Map the internal format entries to external edit-doc format
+    doc_list = [ db_entry_to_editdoc(entry) for entry in entry_list ]
+
+    # Convert the edit-doc list to YAML format and launch the editor
+    click.echo(yaml.dump_all(doc_list))
 
 #@cli.command(name='tags',
 #             short_help='List tags')
 #def command_tags():
 #    click.echo("tags")
-
-#@cli.command(name='refresh',
-#             short_help='Update bookmark titles, re-cache webpage')
-#@click.option('--all', 'update_all', is_flag=True, help='Refresh all entries')
-#@click.option('--cache', 'update_cache', is_flag=True, help='Refresh cached webpage')
-#@click.argument('id_list', metavar='[ID]...', required=False, nargs=-1)
-#def command_refresh(id_list, update_all, update_cache):
-#    click.echo("refresh")
 
 @cli.command(name='version',
              short_help='Show version')
