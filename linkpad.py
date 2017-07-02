@@ -177,7 +177,7 @@ def db_entry_add(db_entry_list, url, title, tags, extended, use_editor=True):
               'title': title if title is not None else page_title(url),
               'tags': list(sorted(dict.fromkeys(tags))) if tags is not None else [],  # Remove duplicate tags
               'created_date': datetime.datetime.utcnow(),
-              'extended': extended is not None else '' }
+              'extended': extended if extended is not None else '' }
 
     # Launch editor to allow user to finalize data
     entry_list = [ entry ]
@@ -677,6 +677,86 @@ def command_database_create(dbname):
     if db_exists(dbname):
         sys.exit("Error: database '{}' already exists".format(dbname))
     db_create_db(dbname)
+
+###
+### Command-line: "$PROGRAM import ..."
+###
+
+@cli.group(name='import', short_help='Import bookmarks')
+def command_import():
+    """ Import bookmarks from a flat file """
+    pass
+
+@command_import.command(name='pinboard-json')
+@click.option('-n', '--dry-run', 'dry_run', is_flag=True,
+        help='Show what would have been imported')
+@click.option('-v', '--verbose', 'verbose', is_flag=True,
+        help='Show verbose details on what was imported')
+@click.argument('jsonfile', type=click.Path(exists=True))
+def command_import_pinboard(jsonfile, verbose, dry_run):
+    """ Import bookmarks from a Pinboard JSON export """
+    # Load JSON file
+    with open(jsonfile, 'r', encoding='utf-8') as f:
+        import_list = reversed(json.load(f))  # Reverse list to process in oldest -> newest order
+
+    # Load existing entries, for de-duplication
+    db_entry_list = db_load_db()
+
+    # Process all the import entries
+    dry_run_prefix = '(dry-run) ' if dry_run else ''
+    edit_list = []
+    for import_item in import_list:
+        # Map import schema to local schema
+        import_entry = {
+            'url': import_item['href'],
+            'title': import_item.get('description',"").replace("\n"," ").replace("\r","").strip(),
+            'extended': import_item.get('extended',"").strip(),
+            'tags': sorted(import_item.get('tags',"").split(' ')) if len(import_item.get('tags')) > 0 else [],
+            'created_date': datetime.datetime.strptime(
+                import_item['time'],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
+            }
+
+        # If there's an existing entry with this same url, update that entry instead
+        matches = [ entry for entry in db_entry_list if import_entry['url'] == entry['url'] ]
+        if len(matches) > 1:
+            raise Exception('Internal Error: found multiple matching entries for url "{}"'.format(import_entry['url']))
+        if len(matches) > 0:
+            entry = copy.deepcopy(matches[0])  # Make a mutable copy of 'entry'
+
+            # Look for difference between entry vs import_entry
+            changed = False
+            for key in import_entry:
+                if entry.get(key) != import_entry.get(key):
+                    if verbose:
+                        click.echo(
+                            format_colorize('{}#[fg=yellow]{}#[none] updated {}: "{}" --> "{}"').format(
+                            dry_run_prefix, entry['id'][:8], key, entry.get(key), import_entry.get(key)))
+                    entry[key] = import_entry[key]
+                    changed = True
+                if changed:
+                    edit_list.append(entry)
+        # Othewise create a brand-new entry
+        else:
+            entry = copy.deepcopy(import_entry)
+            entry['id'] = db_entry_generate_id()
+            if verbose:
+                click.echo('{}imported {}: {}'.format(dry_run_prefix, entry['id'][0:8], entry['url']))
+            edit_list.append(entry)
+
+    if len(edit_list) < 1:
+        sys.exit('No changes to import')
+    changed_list = db_entry_list_update(db_entry_list, edit_list)
+    if changed_list is None:
+        sys.exit('No changes found')
+    click.echo('{}imported {} entries'.format(dry_run_prefix, len(changed_list)))
+
+    if dry_run:
+        return
+    db_save_db(db_entry_list)
+    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
+    _git.add(os.path.join(LINKPAD_DBPATH, 'bookmarks.json'))
+    commit_desc = 'Import {}'.format(click.format_filename(jsonfile, shorten=True))
+    _git.commit('-q', '-m', commit_desc)
 
 if __name__ == '__main__':
     cli()
