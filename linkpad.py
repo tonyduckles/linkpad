@@ -206,6 +206,18 @@ def db_exists(dbname = None):
     dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
     return True if os.path.isdir(dbpath) and os.path.isfile(os.path.join(dbpath, 'format')) else False
 
+def db_filepath_format_file(dbpath=None):
+    dbpath = dbpath or LINKPAD_DBPATH
+    return os.path.join(dbpath, 'format')
+
+def db_filepath_bookmarks_file(dbpath=None):
+    dbpath = dbpath or LINKPAD_DBPATH
+    return os.path.join(dbpath, 'bookmarks.json')
+
+def db_filepath_entry_archive_dir(id, dbpath=None):
+    dbpath = dbpath or LINKPAD_DBPATH
+    return os.path.join(dbpath, 'archive', id)
+
 def db_create_db(dbname):
     """ Initialize new database """
     dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
@@ -217,11 +229,7 @@ def db_create_db(dbname):
     sh.chmod('700', dbpath)
     _git.init('-q')          # Init git repo
 
-    #index_file = os.path.join(dbpath, 'index')
-    #sh.touch(index_file)
-    #_git.add(index_file)
-
-    format_file = os.path.join(dbpath, 'format')
+    format_file = db_filepath_format_file(dbpath)
     sh.echo("1", _out=format_file)
     _git.add(format_file)
 
@@ -232,9 +240,9 @@ def db_load_db():
     if not db_exists():
         sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
 
-    dbpath = os.path.join(LINKPAD_DBPATH, 'bookmarks.json')
-    if os.path.isfile(dbpath):
-        with open(dbpath, 'r', encoding='utf-8') as f:
+    dbfile = db_filepath_bookmarks_file()
+    if os.path.isfile(dbfile):
+        with open(dbfile, 'r', encoding='utf-8') as f:
             db_entry_list = [ db_entry_internalize(entry) for entry in json.load(f) ]
     else:
         db_entry_list = []
@@ -245,8 +253,8 @@ def db_save_db(db_entry_list):
     if not db_exists():
         sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
 
-    dbpath = os.path.join(LINKPAD_DBPATH, 'bookmarks.json')
-    with open(dbpath, 'w', encoding='utf-8') as f:
+    dbfile = db_filepath_bookmarks_file()
+    with open(dbfile, 'w', encoding='utf-8') as f:
         # JSON encode each entry individually so we can enforce
         # newlines between each row
         first = True
@@ -512,7 +520,7 @@ def command_add(url, title, tags, extended, no_edit):
     # Save results
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(os.path.join(LINKPAD_DBPATH, 'bookmarks.json'))
+    _git.add(db_filepath_bookmarks_file())
     commit_desc = 'Add \'{}\''.format(changed_list[0]['url'])
     _git.commit('-q', '-m', commit_desc)
 
@@ -547,7 +555,7 @@ def command_edit(search_args, include_soft_deleted):
     # Save results
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(os.path.join(LINKPAD_DBPATH, 'bookmarks.json'))
+    _git.add(db_filepath_bookmarks_file())
     commit_desc = 'Edit \'{}\''.format(' '.join(search_args))
     _git.commit('-q', '-m', commit_desc)
 
@@ -765,7 +773,7 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
         return
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(os.path.join(LINKPAD_DBPATH, 'bookmarks.json'))
+    _git.add(db_filepath_bookmarks_file())
     commit_desc = 'Import pinboard-json \'{}\''.format(click.format_filename(jsonfile, shorten=True))
     _git.commit('-q', '-m', commit_desc)
 
