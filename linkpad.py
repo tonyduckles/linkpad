@@ -33,6 +33,7 @@ import urllib.parse
 import urllib.request
 import bs4
 import http.client
+import tempfile
 
 # Workaround for "http.client.HTTPException: got more than 100 headers" exceptions.
 # Some servers can be misconfigured and can return an expected # of headers.
@@ -181,6 +182,93 @@ def page_title(url):
     except urllib.request.URLError as e:
         return "urlopen error: {}".format(e.reason)
 
+def archive_url(url, archive_dir, verbose=False, throttle_downloads=False):
+    """ Save an archived version of a webpage, along with all the
+        required media you'll need to view the page offline """
+
+    # Abort early if target url doesn't exist
+    rqst = urllib.request.Request(url)
+    rqst.add_header('User-Agent', USER_AGENT)
+    page_exists = False
+    error = ''
+    try:
+        resp = urllib.request.urlopen(rqst)
+        if resp.status == 200:
+            page_exists = True
+        else:
+            error = 'url does not exist (status={})'.format(resp.status)
+    except urllib.request.HTTPError as e:
+        error = "{} {}".format(e.code, e.reason)
+    except urllib.request.URLError as e:
+        error = "urlopen error: {}".format(e.reason)
+    if not page_exists:
+        click.echo('error: '+error)
+        return None
+
+    # Use 'wget' to download an archive version of the webpage
+    tmpdir = tempfile.TemporaryDirectory()
+    wget_args = [
+        '--no-verbose',        # turn off verboseness, without being quiet
+        '--span-hosts',        # go to foreign hosts when recursive
+        '--timestamping',      # don't re-retrieve files unless newer than local
+        '--convert-links',     # make links in downloaded HTML or CSS point to local files
+        '--page-requisites',   # get all images, etc. needed to display HTML page
+        '--directory-prefix', tmpdir.name,   # save files to PREFIX/..
+        '--user-agent', USER_AGENT ]         # identify as AGENT instead of Wget/VERSION
+    if throttle_downloads:
+        wget_args.extend([
+            '--wait=3',        # wait SECONDS between retrievals
+            '--random-wait' ]  # wait from 0.5*WAIT...1.5*WAIT secs between retrievals
+        )
+
+    html_file = None
+    for line in sh.wget(wget_args, url,
+                        #_err_to_out=True,
+                        #_out=sys.stdout,
+                        _ok_code=[ 0, 4, 8 ],
+                        _iter="err"):
+        # Get the target filename by scraping the wget output
+        if html_file is None and ' URL:{} ['.format(url) in line:
+            base = os.path.join(tmpdir.name, "")
+            pos1 = line.find(base)
+            if pos1 > 0:
+                pos2 = line.find('"', pos1)
+                if pos2 > 0:
+                    html_file = line[pos1:pos2]
+        if not verbose:
+            continue
+        click.echo(
+            format_colorize("#[fg=blue]{}#[none]".format(line)),
+            nl=False
+        )
+
+    # Verify we extracted the target filename correctly
+    if not os.path.isfile(html_file):
+        raise RuntimeError('Expected archive file does not exist: {}'.format(html_file))
+
+    # Wipe any pre-existing contents, so we don't leave orphaned files around
+    sh.mkdir(archive_dir, parents=True)
+    for f in os.scandir(archive_dir):
+        if f.is_dir():
+            sh.rm('-r', '-f', f.path)
+        if f.is_file():
+            sh.rm(f.path)
+
+    # Copy the downloaded files to archive_dir
+    sh.rsync('-a', os.path.join(tmpdir.name, ""), archive_dir)
+
+    # Create a symlink pointing to the target html file
+    html_file = html_file.replace(tmpdir.name, archive_dir)
+    symlink_source = html_file.replace(os.path.join(archive_dir, ""), "")  # Relative path
+    symlink_target = os.path.join(archive_dir, 'index.html')
+    sh.cd(archive_dir)
+    sh.ln('-f', '-s', symlink_source, symlink_target)
+
+    # Cleanup staging directory
+    tmpdir.cleanup()
+
+    return html_file
+
 
 
 ###
@@ -278,17 +366,21 @@ def db_entry_generate_id():
 
 def db_entry_externalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime_as_local=False):
     """ Convert an entry dict from internal to external format """
-    created_dt = entry['created_date'].replace(tzinfo=datetime.timezone.utc)
-    if datetime_as_local:
-        created_dt = datetime_utc_to_local(created_dt)
-    entry['created_date'] = created_dt.strftime(datetime_format)
+    for field in entry:
+        if field in [ 'created_date', 'archived_date' ]:
+            date = entry[field].replace(tzinfo=datetime.timezone.utc)
+            if datetime_as_local:
+                date = datetime_utc_to_local(date)
+            entry[field] = date.strftime(datetime_format)
     return entry
 
 def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     """ Convert an entry dict from external to internal format """
     entry = db_entry_internalize_trim(entry)  # Remove empty optional fields
-    created_dt = datetime.datetime.strptime(entry['created_date'], datetime_format)
-    entry['created_date'] = created_dt.astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
+    for field in entry:
+        if field in [ 'created_date', 'archived_date' ]:
+            date = datetime.datetime.strptime(entry[field], datetime_format)
+            entry[field] = date.astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
     return entry
 
 def db_entry_internalize_trim(entry):
@@ -318,6 +410,8 @@ def db_entry_to_editdoc(entry, all_fields=False, datetime_format='%Y-%m-%d %H:%M
 
 def db_entry_from_editdoc(doc, datetime_format='%Y-%m-%d %H:%M:%S %z'):
     """ Return a dict from a user-edited entry """
+    # TODO: Gracefully error if user removed a required field
+    #       and/or added a non-user-editable optional field?
     entry = {}
     for field in DB_ENTRY_REQUIRED_FIELDS:
         entry[field] = doc[field]
@@ -399,6 +493,33 @@ def db_entry_list_update(db_entry_list, entry_list):
 
     return changed_list if len(changed_list) > 0 else None
 
+def db_entry_list_archive(entry_list, verbose=False):
+    changed_list = []
+    for entry in entry_list:
+        if not entry['url'].lower().startswith('http'):
+            continue
+
+        url = entry['url']
+        click.echo('archiving "{}" ...'.format(url))
+        archive_dir = db_filepath_entry_archive_dir(entry['id'])
+        if os.path.isdir(archive_dir):
+            # Wipe pre-existing contents, so we don't leave orphaned files around
+            for f in os.scandir(archive_dir):
+                if f.is_dir():
+                    sh.rm('-r', '-f', f.path)
+                if f.is_file():
+                    sh.rm(f.path)
+        archive_file = archive_url(url, archive_dir, verbose=verbose)
+        if archive_file is None:
+            continue
+
+        edit_entry = copy.deepcopy(entry)
+        edit_entry['archived'] = True
+        edit_entry['archived_date'] = datetime.datetime.utcnow()
+        changed_list.append(edit_entry)
+
+    return changed_list
+
 def db_entry_list_search(db_entry_list, search_args, include_soft_deleted=False):
     """ Find matching entries in the database """
     # Parse the search args
@@ -453,6 +574,9 @@ def db_entry_search_match(entry, search_arg):
     elif search_arg[:3] == 'id:':
         val = search_arg[3:]
         return (val.lower() in entry['id'][0:len(val)].lower() if len(val) > 0 else len(entry['id']) == 0)
+    elif search_arg[:9] == 'archived:':
+        val = (search_arg[9:].lower() == 'true')
+        return (entry.get('archived', False) == val)
     else:
         string = "{} {} {} {}".format(entry['id'],
                                       entry['title'],
@@ -501,14 +625,14 @@ def cli():
         help='Comma separated list of tags')
 @click.option('--extended', 'extended', metavar='TEXT',
         help='Extended comments/notes')
-#@click.option('--archive-webpage', 'archive_webpage', is_flag=True,
-#        help='Archive a cached copy of this webpage')
+@click.option('--archive', 'archive', is_flag=True,
+        help='Archive a cached copy of this webpage')
 @click.option('--no-edit', 'no_edit', is_flag=True,
         help='Suppress launching $EDITOR to edit new entry file')
 @click.argument('url', required=True)
-def command_add(url, title, tags, extended, no_edit):
+def command_add(url, title, tags, extended, archive, no_edit):
     """
-    Add a new bookmark to the database using $EDITOR
+    Add a new bookmark using $EDITOR
     """
     db_entry_list = db_load_db()
     entry_list = db_entry_add(db_entry_list,
@@ -525,10 +649,17 @@ def command_add(url, title, tags, extended, no_edit):
     if changed_list is None:
         sys.exit('No changes found')
 
+    archived_list = []
+    if archive:
+        archived_list = db_entry_list_archive(changed_list)
+
     # Save results
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
     _git.add(db_filepath_bookmarks_file())
+    for entry in archived_list:
+        archive_dir = db_filepath_entry_archive_dir(entry['id'])
+        _git.add('-A', '-f', archive_dir)
     commit_desc = 'Add \'{}\''.format(changed_list[0]['url'])
     _git.commit('-q', '-m', commit_desc)
 
@@ -541,7 +672,7 @@ def command_add(url, title, tags, extended, no_edit):
 @click.argument('search_args', metavar='[ID]...', nargs=-1)
 def command_edit(search_args, include_soft_deleted):
     """
-    Edit existing bookmarks in the database using $EDITOR
+    Edit existing bookmarks using $EDITOR
     """
     db_entry_list = db_load_db()
     entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
@@ -554,6 +685,9 @@ def command_edit(search_args, include_soft_deleted):
     entry_list = db_entry_list_edit(entry_list)
     if entry_list is None:
         sys.exit('User aborted')
+
+    # TODO: Support user adding "archived: True" to the YAML text,
+    #       and then doing archiving here?
 
     # Update the database with the new entry
     changed_list = db_entry_list_update(db_entry_list, entry_list)
@@ -569,6 +703,39 @@ def command_edit(search_args, include_soft_deleted):
 
     # Display changed entries
     db_entry_print(changed_list)
+
+@cli.command(name='archive', short_help='Archive webpage')
+@click.option('-v', '--verbose', 'verbose', is_flag=True,
+        help='Show verbose wget output')
+@click.argument('search_args', metavar='[ID]...', nargs=-1)
+def command_archive(search_args, verbose):
+    """
+    Create/update a self-contained HTML archive for bookmarks
+    """
+    db_entry_list = db_load_db()
+    entry_list = db_entry_list_search(db_entry_list, search_args)
+    if entry_list is None:
+        sys.exit('No selected entries')
+
+    click.echo('{} entries to archive'.format(len(entry_list)))
+    if len(entry_list) > 5 and not click.confirm('Do you want to continue?'):
+        sys.exit('User aborted')
+    changed_list = db_entry_list_archive(entry_list, verbose=verbose)
+    if changed_list is None:
+        sys.exit('No changes found')
+
+    # Update database
+    _ = db_entry_list_update(db_entry_list, changed_list)
+
+    # Save results
+    db_save_db(db_entry_list)
+    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
+    _git.add(db_filepath_bookmarks_file())
+    for entry in changed_list:
+        archive_dir = db_filepath_entry_archive_dir(entry['id'])
+        _git.add('-A', '-f', archive_dir)
+    commit_desc = 'Archive \'{}\''.format(' '.join(search_args))
+    _git.commit('-q', '-m', commit_desc)
 
 #@cli.command(name='grep', short_help='Find entries by grep\'ing through cached webpage')
 #def command_grep():
