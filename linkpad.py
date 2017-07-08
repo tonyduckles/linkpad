@@ -56,6 +56,7 @@ DB_ENTRY_OPTIONAL_FIELDS = [ 'archived',
                              'archived_date',
                              'extended',
                              'soft_deleted' ]
+DB_ENTRY_USEREDIT_FIELDS = copy.deepcopy(DB_ENTRY_REQUIRED_FIELDS)
 
 
 
@@ -292,30 +293,37 @@ def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
 
 def db_entry_internalize_trim(entry):
     """ Remove empty optional fields from an internal-format entry """
-    for key in DB_ENTRY_OPTIONAL_FIELDS:
-        if key in entry and len(entry[key]) == 0:
-            del entry[key]
+    for field in DB_ENTRY_OPTIONAL_FIELDS:
+        if field in entry and type(entry[field]) is str and len(entry[field]) == 0:
+            del entry[field]
     return entry
 
-def db_entry_to_editdoc(entry, datetime_format='%Y-%m-%d %H:%M:%S %z', datetime_as_local=True):
+def db_entry_to_editdoc(entry, all_fields=False, datetime_format='%Y-%m-%d %H:%M:%S %z', datetime_as_local=True):
     """ Return an OrderedDict containing the editable fields for an entry, for user-editing """
     doc = collections.OrderedDict()
-    for key in DB_ENTRY_REQUIRED_FIELDS:
-        doc[key] = entry[key]
-    for key in DB_ENTRY_OPTIONAL_FIELDS:
-        if key in entry:
-            doc[key] = entry[key]
+    fields = []
+    if all_fields:
+        # Include all fields
+        fields.extend(DB_ENTRY_REQUIRED_FIELDS)
+        fields.extend(DB_ENTRY_OPTIONAL_FIELDS)
+    else:
+        # Only include user-editable fields
+        fields.extend(DB_ENTRY_USEREDIT_FIELDS)
+
+    for field in fields:
+        if field in entry:
+            doc[field] = entry[field]
 
     return db_entry_externalize(doc, datetime_format, datetime_as_local)
 
 def db_entry_from_editdoc(doc, datetime_format='%Y-%m-%d %H:%M:%S %z'):
     """ Return a dict from a user-edited entry """
     entry = {}
-    for key in DB_ENTRY_REQUIRED_FIELDS:
-        entry[key] = doc[key]
-    for key in DB_ENTRY_OPTIONAL_FIELDS:
-        if key in doc:
-            entry[key] = doc[key]
+    for field in DB_ENTRY_REQUIRED_FIELDS:
+        entry[field] = doc[field]
+    for field in DB_ENTRY_OPTIONAL_FIELDS:
+        if field in doc:
+            entry[field] = doc[field]
 
     return db_entry_internalize(entry, datetime_format)
 
@@ -429,20 +437,20 @@ def db_entry_list_search(db_entry_list, search_args, include_soft_deleted=False)
 
 def db_entry_search_match(entry, search_arg):
     """ Check if this entry matches the given search_arg """
-    if search_arg[0:6] == "title:":
+    if search_arg[:6] == 'title:':
         val = search_arg[6:]
         return (val.lower() in entry['title'].lower() if len(val) > 0 else len(entry['title']) == 0)
-    elif search_arg[0:4] == "tag:":
+    elif search_arg[:4] == 'tag:':
         val = search_arg[4:]
         return (any(val.lower() in tag.lower() for tag in entry['tags']) if len(val) > 0 else len(entry['tags']) == 0)
-    elif search_arg[0:5] == "site:":
+    elif search_arg[:5] == 'site:':
         val = search_arg[5:]
         url_domain = "{0.netloc}".format(urllib.parse.urlsplit(entry['url']))
         return (val.lower() in url_domain.lower() if len(val) > 0 else len(url_domain) == 0)
-    elif search_arg[0:4] == "url:":
+    elif search_arg[:4] == 'url:':
         val = search_arg[4:]
         return (val.lower() in entry['url'].lower() if len(val) > 0 else len(entry['url']) == 0)
-    elif search_arg[0:3] == "id:":
+    elif search_arg[:3] == 'id:':
         val = search_arg[3:]
         return (val.lower() in entry['id'][0:len(val)].lower() if len(val) > 0 else len(entry['id']) == 0)
     else:
@@ -630,7 +638,7 @@ def command_show(search_args, include_soft_deleted):
         sys.exit()
 
     # Map the internal format entries to external edit-doc format
-    doc_list = [ db_entry_to_editdoc(entry) for entry in entry_list ]
+    doc_list = [ db_entry_to_editdoc(entry, all_fields=True) for entry in entry_list ]
 
     # Convert the edit-doc list to YAML format and launch the editor
     click.echo(yaml.dump_all(doc_list))
