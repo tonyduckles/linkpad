@@ -10,7 +10,7 @@
 #
 # Database Structure:
 # ===================
-# - Bookmarks are stored as a JSON dict at "$dbpath/bookmarks.json".
+# - Bookmarks are stored as a JSON dict at "$dbpath/entries.json".
 # - Optional webpage archive is stored at "$dbpath/archive/<id>.html".
 # - Internal schema veraion stored at "$dbpath/format".
 #
@@ -299,9 +299,9 @@ def db_filepath_format_file(dbpath=None):
     dbpath = dbpath or LINKPAD_DBPATH
     return os.path.join(dbpath, 'format')
 
-def db_filepath_bookmarks_file(dbpath=None):
+def db_filepath_database_file(dbpath=None):
     dbpath = dbpath or LINKPAD_DBPATH
-    return os.path.join(dbpath, 'bookmarks.json')
+    return os.path.join(dbpath, 'entries.json')
 
 def db_filepath_entry_archive_dir(id, dbpath=None):
     dbpath = dbpath or LINKPAD_DBPATH
@@ -329,7 +329,7 @@ def db_load_db():
     if not db_exists():
         sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
 
-    dbfile = db_filepath_bookmarks_file()
+    dbfile = db_filepath_database_file()
     if os.path.isfile(dbfile):
         with open(dbfile, 'r', encoding='utf-8') as f:
             db_entry_list = [ db_entry_internalize(entry) for entry in json.load(f) ]
@@ -342,7 +342,7 @@ def db_save_db(db_entry_list):
     if not db_exists():
         sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
 
-    dbfile = db_filepath_bookmarks_file()
+    dbfile = db_filepath_database_file()
     with open(dbfile, 'w', encoding='utf-8') as f:
         # JSON encode each entry individually so we can enforce
         # newlines between each row
@@ -656,7 +656,7 @@ def command_add(url, title, tags, extended, archive, no_edit):
     # Save results
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_bookmarks_file())
+    _git.add(db_filepath_database_file())
     for entry in archived_list:
         archive_dir = db_filepath_entry_archive_dir(entry['id'])
         _git.add('-A', '-f', archive_dir)
@@ -697,7 +697,7 @@ def command_edit(search_args, include_soft_deleted):
     # Save results
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_bookmarks_file())
+    _git.add(db_filepath_database_file())
     commit_desc = 'Edit \'{}\''.format(' '.join(search_args))
     _git.commit('-q', '-m', commit_desc)
 
@@ -730,7 +730,7 @@ def command_archive(search_args, verbose):
     # Save results
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_bookmarks_file())
+    _git.add(db_filepath_database_file())
     for entry in changed_list:
         archive_dir = db_filepath_entry_archive_dir(entry['id'])
         _git.add('-A', '-f', archive_dir)
@@ -948,7 +948,7 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
         return
     db_save_db(db_entry_list)
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_bookmarks_file())
+    _git.add(db_filepath_database_file())
     commit_desc = 'Import pinboard-json \'{}\''.format(click.format_filename(jsonfile, shorten=True))
     _git.commit('-q', '-m', commit_desc)
 
