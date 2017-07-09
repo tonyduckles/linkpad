@@ -618,6 +618,54 @@ def cli():
     """
     pass
 
+@cli.command(name='search', short_help='Help for entry searching')
+def command_search():
+    """
+    All the `linkpad` subcommands which act upon a list of entries
+    [e.g. list, show, edit] take in a list of SEARCH terms and then
+    act upon the resulting matchset.
+
+    Searching is always case-insensitive.
+
+    \b
+    SEARCH TERM FORMAT:
+       Enter a specific entry ID (or short ID) to match a single entry,
+       or enter multiple ID's to select multiple entries.
+
+    \b
+       If you enter multiple terms, match any entries which contain *any* of
+       those terms [in id, title, tags, or url fields].
+
+    \b
+       You can further control the search results by using Search Operators
+       and/or Inclusion/Exclusion prefixes.
+
+    \b
+       Search Operators
+       ----------------
+       TEXT            Search for text in any -- id, title, tags, url (default)
+       title:TEXT      Search for text in title
+       tag:TEXT        Search for text in tag
+       url:TEXT        Search for text in url
+       site:TEXT       Search for text in url domain name
+       id:TEXT         Search for entry id prefix match
+
+    \b
+       Inclusion/Exclusion
+       -------------------
+       Prefix search string for AND/OR/NOT handling:
+       +TEXT           All these words
+        TEXT           Any of these words (default)
+       -TEXT           None of these words
+
+    \b
+       Note: when using exclusions, you must pass in "--" as the first
+       argument as the separator between options and arguments, which is the
+       POSIX convention.
+
+    """
+    pass
+
 @cli.command(name='add', short_help='Add new entry')
 @click.option('--title', 'title', metavar='TITLE',
         help='Title, by default webpage title will be fetched')
@@ -626,13 +674,13 @@ def cli():
 @click.option('--extended', 'extended', metavar='TEXT',
         help='Extended comments/notes')
 @click.option('--archive', 'archive', is_flag=True,
-        help='Archive a cached copy of this webpage')
+        help='Archive an offline copy of this webpage')
 @click.option('--no-edit', 'no_edit', is_flag=True,
         help='Suppress launching $EDITOR to edit new entry file')
 @click.argument('url', required=True)
 def command_add(url, title, tags, extended, archive, no_edit):
     """
-    Add a new bookmark using $EDITOR
+    Add a new entry using $EDITOR
     """
     db_entry_list = db_load_db()
     entry_list = db_entry_add(db_entry_list,
@@ -666,13 +714,18 @@ def command_add(url, title, tags, extended, archive, no_edit):
     # Display changed entries
     db_entry_print(changed_list)
 
-@cli.command(name='edit', short_help='Edit existing entry')
+@cli.command(name='edit', short_help='Edit existing entries')
 @click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
         help='All entries, including soft-deleted entries')
-@click.argument('search_args', metavar='[ID]...', nargs=-1)
+@click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
 def command_edit(search_args, include_soft_deleted):
     """
-    Edit existing bookmarks using $EDITOR
+    Edit existing entries using $EDITOR
+
+    \b
+    SEARCH TERM FORMAT:
+       (See `linkpad search --help`)
+
     """
     db_entry_list = db_load_db()
     entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
@@ -704,13 +757,13 @@ def command_edit(search_args, include_soft_deleted):
     # Display changed entries
     db_entry_print(changed_list)
 
-@cli.command(name='archive', short_help='Archive webpage')
+@cli.command(name='archive', short_help='Create offline webpage archive of entries')
 @click.option('-v', '--verbose', 'verbose', is_flag=True,
         help='Show verbose wget output')
 @click.argument('search_args', metavar='[ID]...', nargs=-1)
 def command_archive(search_args, verbose):
     """
-    Create/update a self-contained HTML archive for bookmarks
+    Create/update an offline webpage archive for selected entries.
     """
     db_entry_list = db_load_db()
     entry_list = db_entry_list_search(db_entry_list, search_args)
@@ -748,33 +801,40 @@ def command_archive(search_args, verbose):
         default='created_date', show_default=True,
         help='Sort list by entry field')
 @click.option('-f', '--format', 'format', metavar='FORMAT',
-        help='Custom output format')
-@click.argument('search_args', metavar='[TEXT]...', nargs=-1)
+        help='Custom output format -- see "OUTPUT FORMAT"')
+@click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
 def command_list(search_args, include_soft_deleted, sort_key, format):
     """
-    List all entries, or search for matching entries.
+    List all entries, or list all selected entries.
 
     List all entries by default (i.e. no search filters).
-    Optionally pass in a list of search strings to filter entries.
+    Optionally pass in a list of SEARCH terms to select specific entries.
 
     \b
-    Search string format:
-       TEXT            Search for text in any -- id, title, tags, url
-       title:TEXT      Search for text in title
-       tag:TEXT        Search for text in tag
-       url:TEXT        Search for text in url
-       site:TEXT       Search for text in url domain name
-       id:TEXT         Search for entry id prefix match
+    SEARCH TERM FORMAT:
+       (See `linkpad search --help`)
 
     \b
-    Prefix search string for AND/OR/NOT handling:
-       +TEXT           All these words
-        TEXT           Any of these words
-       -TEXT           None of these words
+    OUTPUT FORMAT:
+       The `--format` option allows you to control the text that is printed
+       for each matched entry.
 
-    Note: when using exclusions, you must pass in "--" as the first
-    argument as the separator for options and arguments, which is the
-    POSIX convention.
+    \b
+       Variables:
+          %id             Full ID
+          %shortid        Short ID
+          %url            URL
+          %title          Title
+          %tags           Tag list, comma-delimited
+          %created_date   Absolute date
+          %created_ago    Relative date
+
+    \b
+       Style sequences:
+          #[style] where 'style' are any Tmux-style style strings
+
+    \b
+       Example: "#[fg=yellow]%shortid#[none] %title [%url] (%tags) (%created_ago)"
     """
     db_entry_list = db_load_db()
     entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
@@ -792,12 +852,19 @@ def command_list(search_args, include_soft_deleted, sort_key, format):
 #    click.echo("remove")
 
 @cli.command(name='show',
-             short_help='Show entry contents')
+             short_help='Show full contents of entries')
 @click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
         help='All entries, including soft-deleted entries')
-@click.argument('search_args', metavar='[ID]...', nargs=-1)
+@click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
 def command_show(search_args, include_soft_deleted):
-    """ Show the contents of matching entries """
+    """
+    Show full contents of selected entries.
+
+    \b
+    SEARCH TERM FORMAT:
+       (See `linkpad search --help`)
+
+    """
     db_entry_list = db_load_db()
     entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
     if entry_list is None:
