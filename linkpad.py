@@ -182,11 +182,15 @@ def page_title(url):
     except urllib.request.URLError as e:
         return "urlopen error: {}".format(e.reason)
 
-def archive_url(url, archive_dir, verbose=False, throttle_downloads=False):
-    """ Save an archived version of a webpage, along with all the
-        required media you'll need to view the page offline """
+def is_url(url):
+    """ Check if a url is a valid url """
+    return True if url.split(':')[0] in [ 'http', 'https' ] else False
 
-    # Abort early if target url doesn't exist
+def is_page_exists(url):
+    """ Check if a webpage exists """
+    if not is_url(url):
+        return False, 'Not a valid url'
+
     rqst = urllib.request.Request(url)
     rqst.add_header('User-Agent', USER_AGENT)
     page_exists = False
@@ -201,6 +205,14 @@ def archive_url(url, archive_dir, verbose=False, throttle_downloads=False):
         error = "{} {}".format(e.code, e.reason)
     except urllib.request.URLError as e:
         error = "urlopen error: {}".format(e.reason)
+    return page_exists, error
+
+def archive_url(url, archive_dir, verbose=False, throttle_downloads=False):
+    """ Save an archived version of a webpage, along with all the
+        required media you'll need to view the page offline """
+
+    # Abort early if target url doesn't exist
+    page_exists, error = is_page_exists(url)
     if not page_exists:
         click.echo('error: '+error)
         return None
