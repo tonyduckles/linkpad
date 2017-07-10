@@ -52,7 +52,7 @@ Clone this repository and install dependencies with `pip`:
 ```bash
 $ git clone https://github.com/tonyduckles/linkpad.git
 $ cd linkpad
-$ pip install -r requirements.txt
+$ pip3 install -r requirements.txt
 ```
 
 Or if you want to sandbox the Python run-time environment, setup a new
@@ -63,7 +63,7 @@ $ git clone https://github.com/tonyduckles/linkpad.git
 $ cd linkpad
 $ virtualenv .venv
 $ . .venv/bin/activate
-$ pip install --editable .
+$ pip3 install --editable .
 ```
 
 ## Usage
