@@ -603,6 +603,22 @@ def db_entry_print(entry_list, print_format=None):
             line = line.replace(search, replacement)
         click.echo(line)
 
+def db_git_commit(commit_desc, archive_list=[]):
+    """ Use 'git add' and 'git commit' to commit any pending edits """
+    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
+
+    # Track any changes to the database file
+    db_file = db_filepath_database_file()
+    if os.path.isfile(db_file):
+        _git.add(db_file)
+
+    # Track any changes in entry archive files
+    for entry in archive_list:
+        archive_dir = db_filepath_entry_archive_dir(entry['id'])
+        _git.add('-A', '-f', archive_dir)
+
+    # Commit the tracked changes
+    _git.commit('-q', '-m', commit_desc)
 
 
 ###
@@ -703,13 +719,8 @@ def command_add(url, title, tags, extended, archive, no_edit):
 
     # Save results
     db_save_db(db_entry_list)
-    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_database_file())
-    for entry in archived_list:
-        archive_dir = db_filepath_entry_archive_dir(entry['id'])
-        _git.add('-A', '-f', archive_dir)
-    commit_desc = 'Add \'{}\''.format(changed_list[0]['url'])
-    _git.commit('-q', '-m', commit_desc)
+    commit_desc = 'Add {}'.format("'"+changed_list[0]['url']+"'")
+    db_git_commit(commit_desc, archived_list)
 
     # Display changed entries
     db_entry_print(changed_list)
@@ -749,10 +760,8 @@ def command_edit(search_args, include_soft_deleted):
 
     # Save results
     db_save_db(db_entry_list)
-    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_database_file())
-    commit_desc = 'Edit \'{}\''.format(' '.join(search_args))
-    _git.commit('-q', '-m', commit_desc)
+    commit_desc = 'Edit {}'.format("'"+(' '.join(search_args))+"'" if search_args else 'all')
+    db_git_commit(commit_desc)
 
     # Display changed entries
     db_entry_print(changed_list)
@@ -773,22 +782,17 @@ def command_archive(search_args, verbose):
     click.echo('{} entries to archive'.format(len(entry_list)))
     if len(entry_list) > 5 and not click.confirm('Do you want to continue?'):
         sys.exit('User aborted')
-    changed_list = db_entry_list_archive(entry_list, verbose=verbose)
-    if changed_list is None:
+    archived_list = db_entry_list_archive(entry_list, verbose=verbose)
+    if archived_list is None:
         sys.exit('No changes found')
 
     # Update database
-    _ = db_entry_list_update(db_entry_list, changed_list)
+    _ = db_entry_list_update(db_entry_list, archived_list)
 
     # Save results
     db_save_db(db_entry_list)
-    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_database_file())
-    for entry in changed_list:
-        archive_dir = db_filepath_entry_archive_dir(entry['id'])
-        _git.add('-A', '-f', archive_dir)
-    commit_desc = 'Archive \'{}\''.format(' '.join(search_args))
-    _git.commit('-q', '-m', commit_desc)
+    commit_desc = 'Archive {}'.format("'"+(' '.join(search_args))+"'" if search_args else 'all')
+    db_git_commit(commit_desc, archived_list)
 
 #@cli.command(name='grep', short_help='Find entries by grep\'ing through cached webpage')
 #def command_grep():
