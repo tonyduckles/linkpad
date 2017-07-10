@@ -584,15 +584,15 @@ def db_entry_search_match(entry, search_arg):
                                       entry['tags'])
         return (search_arg.lower() in string.lower())
 
-def db_entry_print(entry_list, format=''):
-    """ Print entries based on 'format' template """
-    format = format or "#[fg=yellow]%shortid#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
-    format_line = format_colorize(format)  # Evaluate style mnemonics ahead of time
+def db_entry_print(entry_list, print_format=None):
+    """ Print entries based on print_format template """
+    print_format = print_format or "#[fg=yellow]%shortid#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
+    print_format_line = format_colorize(print_format)  # Evaluate style mnemonics ahead of time
 
     for entry in entry_list:
-        # Build the final output line based on the 'format' template
-        line = format_line
-        subs = [ ('%shortid', entry['id'][0:8]),
+        # Build the final output line based on the print_format template
+        line = print_format_line
+        subs = [ ('%shortid', entry['id'][:8]),
                  ('%id', entry['id']),
                  ('%url', entry['url']),
                  ('%title', entry['title']),
@@ -800,10 +800,10 @@ def command_archive(search_args, verbose):
 @click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
         default='created_date', show_default=True,
         help='Sort list by entry field')
-@click.option('-f', '--format', 'format', metavar='FORMAT',
-        help='Custom output format -- see "OUTPUT FORMAT"')
+@click.option('-f', '--format', 'print_format', metavar='FORMAT',
+        help='Custom print format -- see "PRINT FORMAT"')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_list(search_args, include_soft_deleted, sort_key, format):
+def command_list(search_args, include_soft_deleted, sort_key, print_format):
     """
     List all entries, or list all selected entries.
 
@@ -815,7 +815,7 @@ def command_list(search_args, include_soft_deleted, sort_key, format):
        (See `linkpad search --help`)
 
     \b
-    OUTPUT FORMAT:
+    PRINT FORMAT:
        The `--format` option allows you to control the text that is printed
        for each matched entry.
 
@@ -844,7 +844,7 @@ def command_list(search_args, include_soft_deleted, sort_key, format):
 
     # Display match entries, sorted by sort_key
     entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
-    db_entry_print(entry_list)
+    db_entry_print(entry_list, print_format)
 
 #@cli.command(name='remove',
 #             short_help='Remove entry')
