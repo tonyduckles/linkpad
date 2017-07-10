@@ -59,7 +59,6 @@ Or if you want to sandbox the Python run-time environment, setup a new
 `virtualenv` and install dependencies via `setuptools`:
 
 ```bash
-via `setuptools`:
 $ git clone https://github.com/tonyduckles/linkpad.git
 $ cd linkpad
 $ virtualenv .venv
