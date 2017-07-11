@@ -1030,10 +1030,8 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
     if dry_run:
         return
     db_save_db(db_entry_list)
-    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
-    _git.add(db_filepath_database_file())
     commit_desc = 'Import pinboard-json \'{}\''.format(click.format_filename(jsonfile, shorten=True))
-    _git.commit('-q', '-m', commit_desc)
+    db_git_commit(commit_desc)
 
 if __name__ == '__main__':
     cli()
