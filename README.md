@@ -52,18 +52,26 @@ Clone this repository and install dependencies with `pip`:
 ```bash
 $ git clone https://github.com/tonyduckles/linkpad.git
 $ cd linkpad
-$ pip3 install -r requirements.txt
+$ pip3 install --editable .
 ```
 
 Or if you want to sandbox the Python run-time environment, setup a new
 `virtualenv` and install dependencies via `setuptools`:
 
 ```bash
+$ pip3 install virtualenv
 $ git clone https://github.com/tonyduckles/linkpad.git
 $ cd linkpad
 $ virtualenv .venv
 $ . .venv/bin/activate
 $ pip3 install --editable .
+```
+
+### Bash Completion
+Install Bash completion (via [Click](http://click.pocoo.org/5/bashcomplete/)):
+
+```bash
+eval "$(_LINKPAD_COMPLETE=source linkpad)"
 ```
 
 ## Usage
