@@ -871,8 +871,11 @@ def command_list(search_args, include_soft_deleted, sort_key, print_format):
              short_help='Show full contents of entries')
 @click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
         help='All entries, including soft-deleted entries')
+@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
+        default='created_date', show_default=True,
+        help='Sort list by entry field')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_show(search_args, include_soft_deleted):
+def command_show(search_args, include_soft_deleted, sort_key):
     """
     Show full contents of selected entries.
 
@@ -886,6 +889,9 @@ def command_show(search_args, include_soft_deleted):
     if entry_list is None:
         #sys.exit('No selected entries')
         sys.exit()
+
+    # Sort entry_list
+    entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
 
     # Map the internal format entries to external edit-doc format
     doc_list = [ db_entry_to_editdoc(entry, all_fields=True) for entry in entry_list ]
