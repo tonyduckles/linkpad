@@ -56,7 +56,7 @@ DB_ENTRY_REQUIRED_FIELDS = [ 'id',
 DB_ENTRY_OPTIONAL_FIELDS = [ 'archived',
                              'archived_date',
                              'extended',
-                             'soft_deleted' ]
+                             'removed' ]
 DB_ENTRY_USEREDIT_FIELDS = copy.deepcopy(DB_ENTRY_REQUIRED_FIELDS)
 
 
@@ -533,22 +533,23 @@ def db_entry_list_archive(entry_list, verbose=False):
     return changed_list if len(changed_list) > 0 else None
 
 def db_entry_list_remove(db_entry_list, entry_list, hard_delete=False):
-    """ Soft-delete (or hard-delete) a list of entries """
+    """ Remove (or purge) a list of entries """
     changed_list = []
     for rm_entry in entry_list:
         for pos, entry in enumerate(db_entry_list):
             if entry['id'] == rm_entry['id']:
                 if hard_delete:
                     del db_entry_list[pos]
+                    entry['hard_deleted'] = True
                     changed_list.append(entry)
                 else:
-                    if (not 'soft_deleted' in entry) or (not entry['soft_deleted']):
-                        entry['soft_deleted'] = True
+                    if (not 'removed' in entry) or (not entry['removed']):
+                        entry['removed'] = True
                         changed_list.append(entry)
                 break
     return changed_list if len(changed_list) > 0 else None
 
-def db_entry_list_search(db_entry_list, search_args, include_soft_deleted=False):
+def db_entry_list_search(db_entry_list, search_args, include_removed=False):
     """ Find matching entries in the database """
     # Parse the search args
     search_all_list = []
@@ -565,8 +566,8 @@ def db_entry_list_search(db_entry_list, search_args, include_soft_deleted=False)
     # Build list of matching entries
     entry_list = []
     for entry in db_entry_list:
-        # Hide soft-deleted entries by default
-        if entry.get('soft_deleted', False) and not include_soft_deleted:
+        # Hide removed entries by default
+        if entry.get('removed', False) and not include_removed:
             continue
 
         # Filter by search_args
@@ -644,7 +645,12 @@ def db_git_commit(commit_desc, archive_list=None):
     if archive_list is not None:
         for entry in archive_list:
             archive_dir = db_filepath_entry_archive_dir(entry['id'])
-            _git.add('-A', '-f', archive_dir)
+            if not entry.get('archived', False):
+                continue
+            if entry.get('hard_deleted', False):
+                _git.rm('-r', '-f', archive_dir)
+            else:
+                _git.add('-A', '-f', archive_dir)
 
     # Commit the tracked changes
     _git.commit('-q', '-m', commit_desc)
@@ -755,10 +761,10 @@ def command_add(url, title, tags, extended, archive, no_edit):
     db_entry_print(changed_list)
 
 @cli.command(name='edit', short_help='Edit existing entries')
-@click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
-        help='All entries, including soft-deleted entries')
+@click.option('-a', '--all', 'include_removed', is_flag=True,
+        help='All entries, including removed entries')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_edit(search_args, include_soft_deleted):
+def command_edit(search_args, include_removed):
     """
     Edit existing entries using $EDITOR
 
@@ -768,7 +774,7 @@ def command_edit(search_args, include_soft_deleted):
 
     """
     db_entry_list = db_load_db()
-    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_removed=include_removed)
     if entry_list is None:
         sys.exit('No selected entries')
 
@@ -826,22 +832,21 @@ def command_archive(search_args, verbose):
 @cli.command(name='remove',
              short_help='Remove entries')
 @click.option('-f', '--force', 'hard_delete', is_flag=True,
-        help='Hard-delete entry')
+        help='Permanently purge entry')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
 def command_remove(search_args, hard_delete):
     """
     Remove entries from the database.
 
-    By default this command will only soft-delete entries -- meaning keeping
-    them in the database and marking them as soft-deleted (inactive). These
-    inactive entries will be ignored search results by default (unless you
-    pass --all).
+    By default this command will only "soft-delete" entries -- meaning keeping
+    them in the database and marking them as removed (inactive). These inactive
+    entries will be ignored search results by default (unless you pass --all).
 
-    Use the --force option if you want to permanently remove (hard-delete)
+    Use the --force option if you want to permanently purge (hard-delete)
     this entry from the database.
     """
     db_entry_list = db_load_db()
-    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=True)
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_removed=True)
     if entry_list is None:
         sys.exit('No selected entries')
 
@@ -851,26 +856,30 @@ def command_remove(search_args, hard_delete):
     changed_list = db_entry_list_remove(db_entry_list, entry_list, hard_delete=hard_delete)
     if changed_list is None:
         sys.exit('No changes found')
+    archive_list = []
+    for entry in changed_list:
+        if entry.get('archived', False):
+            archive_list.append(entry)
 
     # Save results
     db_save_db(db_entry_list)
     commit_desc = '{} {}'.format(('Purge' if hard_delete else 'Remove'), "'"+(' '.join(search_args))+"'" if search_args else 'all')
-    db_git_commit(commit_desc)
+    db_git_commit(commit_desc, archive_list)
 
 #@cli.command(name='grep', short_help='Find entries by grep\'ing through archived offline webpage files')
 #def command_grep():
 #    click.echo("grep")
 
 @cli.command(name='list', short_help='List entries')
-@click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
-        help='All entries, including soft-deleted entries')
+@click.option('-a', '--all', 'include_removed', is_flag=True,
+        help='All entries, including removed entries')
 @click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
         default='created_date', show_default=True,
         help='Sort list by entry field')
 @click.option('-f', '--format', 'print_format', metavar='FORMAT',
         help='Custom print format -- see "PRINT FORMAT"')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_list(search_args, include_soft_deleted, sort_key, print_format):
+def command_list(search_args, include_removed, sort_key, print_format):
     """
     List all entries, or list all selected entries.
 
@@ -904,7 +913,7 @@ def command_list(search_args, include_soft_deleted, sort_key, print_format):
        Example: "#[fg=yellow]%shortid#[none] %title [%url] (%tags) (%created_ago)"
     """
     db_entry_list = db_load_db()
-    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_removed=include_removed)
     if entry_list is None:
         #sys.exit('No selected entries')
         sys.exit()
@@ -915,13 +924,13 @@ def command_list(search_args, include_soft_deleted, sort_key, print_format):
 
 @cli.command(name='show',
              short_help='Show full contents of entries')
-@click.option('-a', '--all', 'include_soft_deleted', is_flag=True,
-        help='All entries, including soft-deleted entries')
+@click.option('-a', '--all', 'include_removed', is_flag=True,
+        help='All entries, including removed entries')
 @click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
         default='created_date', show_default=True,
         help='Sort list by entry field')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_show(search_args, include_soft_deleted, sort_key):
+def command_show(search_args, include_removed, sort_key):
     """
     Show full contents of selected entries.
 
@@ -931,7 +940,7 @@ def command_show(search_args, include_soft_deleted, sort_key):
 
     """
     db_entry_list = db_load_db()
-    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=include_soft_deleted)
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_removed=include_removed)
     if entry_list is None:
         #sys.exit('No selected entries')
         sys.exit()
