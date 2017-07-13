@@ -530,7 +530,23 @@ def db_entry_list_archive(entry_list, verbose=False):
         edit_entry['archived_date'] = datetime.datetime.utcnow()
         changed_list.append(edit_entry)
 
-    return changed_list
+    return changed_list if len(changed_list) > 0 else None
+
+def db_entry_list_remove(db_entry_list, entry_list, hard_delete=False):
+    """ Soft-delete (or hard-delete) a list of entries """
+    changed_list = []
+    for rm_entry in entry_list:
+        for pos, entry in enumerate(db_entry_list):
+            if entry['id'] == rm_entry['id']:
+                if hard_delete:
+                    del db_entry_list[pos]
+                    changed_list.append(entry)
+                else:
+                    if (not 'soft_deleted' in entry) or (not entry['soft_deleted']):
+                        entry['soft_deleted'] = True
+                        changed_list.append(entry)
+                break
+    return changed_list if len(changed_list) > 0 else None
 
 def db_entry_list_search(db_entry_list, search_args, include_soft_deleted=False):
     """ Find matching entries in the database """
@@ -615,7 +631,7 @@ def db_entry_print(entry_list, print_format=None):
             line = line.replace(search, replacement)
         click.echo(line)
 
-def db_git_commit(commit_desc, archive_list=[]):
+def db_git_commit(commit_desc, archive_list=None):
     """ Use 'git add' and 'git commit' to commit any pending edits """
     _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
 
@@ -625,9 +641,10 @@ def db_git_commit(commit_desc, archive_list=[]):
         _git.add(db_file)
 
     # Track any changes in entry archive files
-    for entry in archive_list:
-        archive_dir = db_filepath_entry_archive_dir(entry['id'])
-        _git.add('-A', '-f', archive_dir)
+    if archive_list is not None:
+        for entry in archive_list:
+            archive_dir = db_filepath_entry_archive_dir(entry['id'])
+            _git.add('-A', '-f', archive_dir)
 
     # Commit the tracked changes
     _git.commit('-q', '-m', commit_desc)
@@ -725,7 +742,7 @@ def command_add(url, title, tags, extended, archive, no_edit):
     if changed_list is None:
         sys.exit('No changes found')
 
-    archived_list = []
+    archived_list = None
     if archive:
         archived_list = db_entry_list_archive(changed_list)
 
@@ -806,7 +823,41 @@ def command_archive(search_args, verbose):
     commit_desc = 'Archive {}'.format("'"+(' '.join(search_args))+"'" if search_args else 'all')
     db_git_commit(commit_desc, archived_list)
 
-#@cli.command(name='grep', short_help='Find entries by grep\'ing through cached webpage')
+@cli.command(name='remove',
+             short_help='Remove entries')
+@click.option('-f', '--force', 'hard_delete', is_flag=True,
+        help='Hard-delete entry')
+@click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
+def command_remove(search_args, hard_delete):
+    """
+    Remove entries from the database.
+
+    By default this command will only soft-delete entries -- meaning keeping
+    them in the database and marking them as soft-deleted (inactive). These
+    inactive entries will be ignored search results by default (unless you
+    pass --all).
+
+    Use the --force option if you want to permanently remove (hard-delete)
+    this entry from the database.
+    """
+    db_entry_list = db_load_db()
+    entry_list = db_entry_list_search(db_entry_list, search_args, include_soft_deleted=True)
+    if entry_list is None:
+        sys.exit('No selected entries')
+
+    click.echo('{} entries to {}'.format(len(entry_list), ('purge' if hard_delete else 'remove')))
+    if len(entry_list) > 5 and not click.confirm('Do you want to continue?'):
+        sys.exit('User aborted')
+    changed_list = db_entry_list_remove(db_entry_list, entry_list, hard_delete=hard_delete)
+    if changed_list is None:
+        sys.exit('No changes found')
+
+    # Save results
+    db_save_db(db_entry_list)
+    commit_desc = '{} {}'.format(('Purge' if hard_delete else 'Remove'), "'"+(' '.join(search_args))+"'" if search_args else 'all')
+    db_git_commit(commit_desc)
+
+#@cli.command(name='grep', short_help='Find entries by grep\'ing through archived offline webpage files')
 #def command_grep():
 #    click.echo("grep")
 
@@ -861,11 +912,6 @@ def command_list(search_args, include_soft_deleted, sort_key, print_format):
     # Display match entries, sorted by sort_key
     entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
     db_entry_print(entry_list, print_format)
-
-#@cli.command(name='remove',
-#             short_help='Remove entry')
-#def command_remove():
-#    click.echo("remove")
 
 @cli.command(name='show',
              short_help='Show full contents of entries')
