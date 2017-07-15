@@ -610,7 +610,7 @@ def db_entry_search_match(entry, search_arg):
         string = "{} {} {} {}".format(entry['id'],
                                       entry['title'],
                                       entry['url'],
-                                      entry['tags'])
+                                      ' '.join(entry['tags']))
         return (search_arg.lower() in string.lower())
 
 def db_entry_print(entry_list, print_format=None):
@@ -962,10 +962,87 @@ def command_show(search_args, include_removed, sort_key, sort_reverse):
     # Convert the edit-doc list to YAML format and launch the editor
     click.echo(yaml.dump_all(doc_list))
 
-#@cli.command(name='tags',
-#             short_help='List tags')
-#def command_tags():
-#    click.echo("tags")
+@cli.command(name='tags',
+             short_help='List tags')
+@click.option('-a', '--all', 'include_removed', is_flag=True,
+        help='All entries, including removed entries')
+@click.option('-c', '--count', 'show_count', is_flag=True,
+        help='Show number of entries per tag')
+@click.option('-s', '--sort', 'sort_key', type=click.Choice(['name', 'count']),
+        default='name', show_default=True,
+        help='Sort list by entry field')
+@click.option('-r', '--reverse', 'sort_reverse', is_flag=True,
+        help='Reverse the sort order')
+@click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
+def command_tags(search_args, include_removed, show_count, sort_key, sort_reverse):
+    """
+    List tags
+
+    \b
+    SEARCH TERM FORMAT:
+       If you enter multiple words, match any tag-names which contain *any* of
+       those terms.
+
+    \b
+       You can further control the search results by using Inclusion/Exclusion
+       prefixes.
+
+    \b
+       Inclusion/Exclusion
+       -------------------
+       Prefix search string for AND/OR/NOT handling:
+       +TEXT           All these words
+        TEXT           Any of these words (default)
+       -TEXT           None of these words
+    """
+    # Parse the search args
+    search_all_list = []
+    search_not_list = []
+    search_any_list = []
+    for arg in search_args:
+        if arg[0] == "+":
+            search_all_list.append(arg[1:])
+        elif arg[0] == "-":
+            search_not_list.append(arg[1:])
+        else:
+            search_any_list.append(arg)
+
+    tag_list = {}
+    db_entry_list = db_load_db()
+    for entry in db_entry_list:
+        # Hide removed entries by default
+        if entry.get('removed', False) and not include_removed:
+            continue
+        for tag in entry['tags']:
+            # Apply search filters
+            if len(search_not_list) > 0:
+                if any((arg.lower() in tag.lower()) for arg in search_not_list):
+                    continue
+            if len(search_all_list) > 0:
+                if not all((arg.lower() in tag.lower()) for arg in search_all_list):
+                    continue
+            if len(search_any_list) > 0:
+                if not any((arg.lower() in tag.lower()) for arg in search_any_list):
+                    continue
+
+            if tag in tag_list:
+                tag_list[tag] += 1
+            else:
+                tag_list[tag] = 1
+
+    sorted_list = tag_list.keys()
+    if sort_key == 'name':
+        sorted_list = sorted(tag_list.keys())
+    if sort_key == 'count':
+        sorted_list = [ key for key in sorted(tag_list, key=tag_list.get) ]
+    if sort_reverse:
+        sorted_list.reverse()
+
+    for tag in sorted_list:
+        if show_count:
+            click.echo('{}\t{}'.format(tag_list[tag], tag))
+        else:
+            click.echo('{}'.format(tag))
 
 @cli.command(name='version',
              short_help='Show version')
