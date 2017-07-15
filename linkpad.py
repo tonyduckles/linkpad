@@ -876,10 +876,12 @@ def command_remove(search_args, hard_delete):
 @click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
         default='created_date', show_default=True,
         help='Sort list by entry field')
+@click.option('-r', '--reverse', 'sort_reverse', is_flag=True,
+        help='Reverse the sort order')
 @click.option('-f', '--format', 'print_format', metavar='FORMAT',
         help='Custom print format -- see "PRINT FORMAT"')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_list(search_args, include_removed, sort_key, print_format):
+def command_list(search_args, include_removed, sort_key, sort_reverse, print_format):
     """
     List all entries, or list all selected entries.
 
@@ -920,6 +922,8 @@ def command_list(search_args, include_removed, sort_key, print_format):
 
     # Display match entries, sorted by sort_key
     entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
+    if sort_reverse:
+        entry_list.reverse()
     db_entry_print(entry_list, print_format)
 
 @cli.command(name='show',
@@ -929,8 +933,10 @@ def command_list(search_args, include_removed, sort_key, print_format):
 @click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
         default='created_date', show_default=True,
         help='Sort list by entry field')
+@click.option('-r', '--reverse', 'sort_reverse', is_flag=True,
+        help='Reverse the sort order')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_show(search_args, include_removed, sort_key):
+def command_show(search_args, include_removed, sort_key, sort_reverse):
     """
     Show full contents of selected entries.
 
@@ -950,6 +956,8 @@ def command_show(search_args, include_removed, sort_key):
 
     # Map the internal format entries to external edit-doc format
     doc_list = [ db_entry_to_editdoc(entry, all_fields=True) for entry in entry_list ]
+    if sort_reverse:
+        doc_list.reverse()
 
     # Convert the edit-doc list to YAML format and launch the editor
     click.echo(yaml.dump_all(doc_list))
