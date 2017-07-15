@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='linkpad',
-    version='0.5',
+    version='1.0',
     description='A command-line bookmark manager',
     author='Tony Duckles',
     author_email='tony@nynim.org',
