@@ -92,19 +92,20 @@ Run `linkpad --help` to get usage information:
       archive   Create offline webpage archive of entries
       database  Database management
       edit      Edit existing entries
-      import    Import bookmarks
+      import    Import entries
       list      List entries
+      remove    Remove entries
       search    Help for entry searching
       show      Show full contents of entries
-
-
+      tags      List tags
+      version   Show version
 
 Run `linkpad <command> --help` to get help on a specific sub-command:
 
     $ linkpad add --help
     Usage: linkpad add [OPTIONS] URL
 
-      Add a new bookmark using $EDITOR
+      Add a new entry using $EDITOR
 
     Options:
       --title TITLE    Title, by default webpage title will be fetched
@@ -122,17 +123,17 @@ want.
 
 Create a new database:
 
-    $ linkpad database create bookmarks
+    $ linkpad database create mybookmarks
 
 Switch to using a different database:
 
 ```bash
-$ linkpad database env bookmarks
-export LINKPAD_DBNAME='bookmarks'
+$ linkpad database env mybookmarks
+export LINKPAD_DBNAME='mybookmarks'
 # Run this command to configure your shell:
-# eval $(linkpad database env 'bookmarks')
+# eval $(linkpad database env 'mybookmarks')
 
-$ eval $(linkpad database env bookmarks)
+$ eval $(linkpad database env mybookmarks)
 ```
 
 ### Bookmarks
@@ -146,7 +147,7 @@ Each bookmark entry is a collection of fields:
 - `id`: (Internal) Internal ID
 - `created_date`: (Internal) Created-on datetime
 
-Here is an example bookmark (presented in YAML format):
+Here is an example bookmark entry (presented in YAML format):
 
     $ linkpad show 53ee08d3
     id: 53ee08d3b5274eab93158f36a2c91ebf
@@ -173,11 +174,11 @@ If you don't save the file then `linkpad` will abort the `add`.
 
 ### Searching / Selecting Bookmarks
 
-All the  `linkpad` subcommands which work upon a *list* of bookmarks -- e.g.
+All the  `linkpad` subcommands which work upon a *list* of entries -- e.g.
 `list`, `show`, `edit` -- really take in a *list of search criteria* and then
-act upon the resulting matchset of bookmarks.
+act upon the resulting matchset of entries.
 
-For example, in the simplest form, you can select individual bookmarks by
+For example, in the simplest form, you can select individual entries by
 supplying the full `id`:
 
     $ linkpad list 53ee08d3b5274eab93158f36a2c91ebf
@@ -188,14 +189,14 @@ You can select based on the "short ID" -- e.g. the first 8 chars:
     $ linkpad list 53ee08d3
     53ee08d3 GitHub - zfsonlinux/zfs-auto-snapshot [https://github.com/zfsonlinux/zfs-auto-snapshot] (backup,snapshot,zfs) (5 months ago)
 
-Behind the scenes, the search engine is looking for any bookmark entries which
+Behind the scenes, the search engine is looking for any entry entries which
 contain the supplied (case-insensitive) text in *any* of the `id`, `title`,
 `url`, or `tags` fields. Since the short ID value is likely unique (enough), it
-will tend to only match the single desired bookmark entry.
+will tend to only match the single desired entry entry.
 
 #### Advanced Search
 
-There are several advanced search operators for limiting which bookmark fields
+There are several advanced search operators for limiting which entry fields
 to search against:
 
 - `title:` - Search for match in `title` value.
@@ -209,7 +210,7 @@ with a `+` or `-` (respectively).
 
 #### Searching Examples
 
-1. List all bookmarks (no search arguments):
+1. List all entries (no search arguments):
 
     ```bash
     $ linkpad list | head -n2
@@ -241,7 +242,7 @@ with a `+` or `-` (respectively).
     5f5f53b1 Layering percussion, what a lot of people seem to miss. : edmproduction [https://www.reddit.com/r/edmproduction/comments/324eoi/layering_percussion_what_a_lot_of_people_seem_to/] (drums,edmprod) (5 months ago)
     ```
 
-5. Find any bookmarks with *no* tags:
+5. Find any entries with *no* tags:
 
     ```bash
     $ linkpad list +tag: | head -n2

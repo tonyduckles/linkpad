@@ -1104,9 +1104,9 @@ def command_database_create(dbname):
 ### Command-line: "$PROGRAM import ..."
 ###
 
-@cli.group(name='import', short_help='Import bookmarks')
+@cli.group(name='import', short_help='Import entries')
 def command_import():
-    """ Import bookmarks from a flat file """
+    """ Import entries from a flat file """
     pass
 
 @command_import.command(name='pinboard-json')
@@ -1116,7 +1116,7 @@ def command_import():
         help='Show verbose details on what was imported')
 @click.argument('jsonfile', type=click.Path(exists=True))
 def command_import_pinboard(jsonfile, verbose, dry_run):
-    """ Import bookmarks from a Pinboard JSON export """
+    """ Import entries from a Pinboard JSON export """
     # Load JSON file
     with open(jsonfile, 'r', encoding='utf-8') as f:
         import_list = reversed(json.load(f))  # Reverse list to process in oldest -> newest order
