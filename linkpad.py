@@ -18,6 +18,7 @@
 # =============
 # - python 3.x
 # - git
+# - wget (for archiving)
 
 import os
 import sys
@@ -56,7 +57,9 @@ DB_ENTRY_REQUIRED_FIELDS = [ 'id',
 DB_ENTRY_OPTIONAL_FIELDS = [ 'archived',
                              'archived_date',
                              'extended',
-                             'removed' ]
+                             'removed',
+                             'removed_date',
+                             'removed_reason' ]
 DB_ENTRY_USEREDIT_FIELDS = copy.deepcopy(DB_ENTRY_REQUIRED_FIELDS)
 
 
@@ -379,7 +382,7 @@ def db_entry_generate_id():
 def db_entry_externalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime_as_local=False):
     """ Convert an entry dict from internal to external format """
     for field in entry:
-        if field in [ 'created_date', 'archived_date' ]:
+        if field in [ 'created_date', 'archived_date', 'removed_date' ]:
             date = entry[field].replace(tzinfo=datetime.timezone.utc)
             if datetime_as_local:
                 date = datetime_utc_to_local(date)
@@ -390,7 +393,7 @@ def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     """ Convert an entry dict from external to internal format """
     entry = db_entry_internalize_trim(entry)  # Remove empty optional fields
     for field in entry:
-        if field in [ 'created_date', 'archived_date' ]:
+        if field in [ 'created_date', 'archived_date', 'removed_date' ]:
             date = datetime.datetime.strptime(entry[field], datetime_format)
             entry[field] = date.astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
     return entry
@@ -545,6 +548,7 @@ def db_entry_list_remove(db_entry_list, entry_list, hard_delete=False):
                 else:
                     if (not 'removed' in entry) or (not entry['removed']):
                         entry['removed'] = True
+                        entry['removed_date'] = datetime.datetime.utcnow()
                         changed_list.append(entry)
                 break
     return changed_list if len(changed_list) > 0 else None
