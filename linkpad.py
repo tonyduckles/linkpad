@@ -31,10 +31,15 @@ import sh
 import datetime
 import uuid
 import urllib.parse
-import urllib.request
 import bs4
 import http.client
 import tempfile
+import requests
+import time
+import random
+import multiprocessing.dummy
+import functools
+import tqdm
 
 # Workaround for "http.client.HTTPException: got more than 100 headers" exceptions.
 # Some servers can be misconfigured and can return an expected # of headers.
@@ -172,43 +177,80 @@ def format_colorize(format):
         retval=format
     return retval
 
+def url_open(url, timeout=None):
+    """ Get a webpage, check if it exists """
+    headers = requests.utils.default_headers()
+    headers.update({'User-Agent': USER_AGENT})
+    page_exists = False
+    error = None
+    content = None
+
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+        if response.ok:
+            page_exists = True
+            content = response.content
+        else:
+            error = 'HTTP error: {} {}'.format(response.status_code, response.reason.title())
+    except requests.exceptions.SSLError as e:
+        error = "SSL error: {}".format(e)
+    except requests.exceptions.HTTPError as e:
+        error = 'HTTP error: {}'.format(e)
+    except requests.exceptions.ConnectionError as e:
+        # Prettify common connection errors
+        if hasattr(e, 'args') and len(e.args) > 0:
+            if type(e.args[0]) == requests.packages.urllib3.exceptions.MaxRetryError:
+                reason = e.args[0].reason
+                if type(reason) == requests.packages.urllib3.exceptions.NewConnectionError:
+                    if hasattr(reason, 'args') and len(reason.args) > 0:
+                        if type(reason.args[0]) == str:
+                            message = reason.args[0]
+                            # Filter DNS lookup error from other connection errors
+                            # (until https://github.com/shazow/urllib3/issues/1003 is resolved)
+                            if ("[Errno 11001] getaddrinfo failed" in message or      # Windows
+                                "[Errno -2] Name or service not known" in message or  # Linux
+                                "[Errno 8] nodename nor servname " in message):       # OS X
+                                error = 'Connection error: DNS lookup error'
+                            else:
+                                error = 'Connection error{}'.format(message[message.find(':'):])
+                if type(reason) == requests.packages.urllib3.exceptions.ConnectTimeoutError:
+                    if hasattr(reason, 'args') and len(reason.args) > 0:
+                        if type(reason.args[0]) == requests.packages.urllib3.connection.HTTPConnection:
+                            conn = reason.args[0]
+                            error = 'Connection error: HTTP connection timeout (connect timeout={})'.format(conn.timeout)
+                        if type(reason.args[0]) == requests.packages.urllib3.connection.VerifiedHTTPSConnection:
+                            conn = reason.args[0]
+                            error = 'Connection error: HTTPS connection timeout (connect timeout={})'.format(conn.timeout)
+        if error is None:
+            error = "Connection error: {}".format(e)
+    except requests.exceptions.MissingSchema as e:
+        error = "Invalid URL: No schema supplied."
+    except requests.exceptions.InvalidSchema as e:
+        error = "Invalid URL: Invalid schema supplied."
+    except requests.exceptions.RequestException as e:
+        error = "Error: {}".format(e)
+    except Exception as e:
+        error = "Exception: {}".format(e)
+
+    return page_exists, error, content
+
+def is_page_exists(url, timeout=None):
+    """ Check if a webpage exists """
+    exists, error, resp = url_open(url, timeout=timeout)
+    return exists, error
+
 def page_title(url):
     """ Get webpage title """
-    rqst = urllib.request.Request(url)
-    rqst.add_header('User-Agent', USER_AGENT)
+    exists, error, resp = url_open(url)
+    if not exists:
+        return ''
+    if len(error) > 0:
+        return ''
     try:
-        page = bs4.BeautifulSoup(urllib.request.urlopen(rqst), "html.parser")
-        if page.title:
-            return page.title.string.strip()
-    except urllib.request.HTTPError as e:
-        return "{} {}".format(e.code, e.reason)
-    except urllib.request.URLError as e:
-        return "urlopen error: {}".format(e.reason)
-
-def is_url(url):
-    """ Check if a url is a valid url """
-    return True if url.split(':')[0] in [ 'http', 'https' ] else False
-
-def is_page_exists(url):
-    """ Check if a webpage exists """
-    if not is_url(url):
-        return False, 'Not a valid url'
-
-    rqst = urllib.request.Request(url)
-    rqst.add_header('User-Agent', USER_AGENT)
-    page_exists = False
-    error = ''
-    try:
-        resp = urllib.request.urlopen(rqst)
-        if resp.status == 200:
-            page_exists = True
-        else:
-            error = 'url does not exist (status={})'.format(resp.status)
-    except urllib.request.HTTPError as e:
-        error = "{} {}".format(e.code, e.reason)
-    except urllib.request.URLError as e:
-        error = "urlopen error: {}".format(e.reason)
-    return page_exists, error
+        page = bs4.BeautifulSoup(resp, "html.parser")
+        return page.title.string.strip() if page.title else ''
+    except Exception as e:
+        return ''
 
 def archive_url(url, archive_dir, verbose=False, throttle_downloads=False):
     """ Save an archived version of a webpage, along with all the
@@ -1047,6 +1089,62 @@ def command_tags(search_args, include_removed, show_count, sort_key, sort_revers
             click.echo('{}\t{}'.format(tag_list[tag], tag))
         else:
             click.echo('{}'.format(tag))
+
+@cli.command(name='check',
+             short_help='Check for broken links')
+@click.option('-j', '--jobs', 'thread_count', metavar='NUM', default=16,
+        help='Set number of threads to use for processing')
+@click.option('-t', '--timeout', 'timeout', metavar='SECS', default=30,
+        help='Set connection timeout threshold')
+@click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
+def command_check(search_args, thread_count, timeout):
+    """
+    Check for broken links
+    """
+    # Create a list of dict's to process
+    db_entry_list = db_load_db()
+    entry_list = db_entry_list_search(db_entry_list, search_args)
+    click.echo('{} urls to check, using {} threads ...'.format(len(entry_list), thread_count), err=True)
+
+    # Multi-thread the processing
+    fail_count = 0
+    fail_list = {}
+    pool = multiprocessing.dummy.Pool(thread_count)
+    with tqdm.tqdm(pool.imap_unordered(functools.partial(check_url, timeout=timeout), entry_list),
+                   total=len(entry_list),
+                   ascii=True) as bar:
+        for result in bar:
+            if not result['exists']:
+                fail_count += 1
+                error = result['error']
+                entry = result['entry']
+                if error in fail_list:
+                    fail_list[error].append(entry)
+                else:
+                    fail_list[error] = [ entry ]
+
+    # Summary
+    for error in sorted(fail_list.keys()):
+        click.echo(error)
+        for entry in fail_list[error]:
+            db_entry_print([ entry ], "  #[fg=yellow]%shortid#[none] #[fg=cyan]%url#[none]")
+        click.echo("")
+
+    click.echo('found {} broken links'.format(fail_count), err=True)
+
+def check_url(entry, timeout):
+    # Sleep between calls to prevent swamping remote server (if there are
+    # multiple adjacent entries on the same website), to avoid getting
+    # transient 502/503 status errors
+    time.sleep(random.uniform(0,3))
+
+    page_exists, error = is_page_exists(entry['url'], timeout=timeout)
+    ret = {
+        'entry': copy.deepcopy(entry),
+        'exists': page_exists,
+        'error': error,
+    }
+    return ret
 
 @cli.command(name='version',
              short_help='Show version')

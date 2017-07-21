@@ -13,6 +13,8 @@ setup(
         'pyyaml',
         'sh',
         'bs4',
+        'requests',
+        'tqdm',
     ],
     license='MIT',
     entry_points="""
