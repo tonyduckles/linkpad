@@ -1175,7 +1175,7 @@ def command_database_list(full_path):
     List available database names
     """
     for entry in os.scandir(LINKPAD_BASEDIR):
-        if entry.is_dir():
+        if entry.is_dir() and db_exists(entry.name):
             click.echo(entry.path if full_path else entry.name)
 
 @command_database.command(name='env')
