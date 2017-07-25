@@ -244,7 +244,7 @@ def page_title(url):
     exists, error, resp = url_open(url)
     if not exists:
         return ''
-    if len(error) > 0:
+    if error is not None and len(error) > 0:
         return ''
     try:
         page = bs4.BeautifulSoup(resp, "html.parser")
@@ -1104,7 +1104,7 @@ def command_check(search_args, thread_count, timeout):
     # Create a list of dict's to process
     db_entry_list = db_load_db()
     entry_list = db_entry_list_search(db_entry_list, search_args)
-    click.echo('{} urls to check, using {} threads ...'.format(len(entry_list), thread_count), err=True)
+    click.echo('{} urls to check (using {} threads) ...'.format(len(entry_list), thread_count), err=True)
 
     # Multi-thread the processing
     fail_count = 0
