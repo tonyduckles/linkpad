@@ -1201,6 +1201,40 @@ def command_database_create(dbname):
     if db_exists(dbname):
         sys.exit("Error: database '{}' already exists".format(dbname))
     db_create_db(dbname)
+    dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
+    click.echo("created '{}'".format(dbpath))
+
+@command_database.command(name='clone',
+             short_help='Git-clone an existing database')
+@click.argument('url', metavar='GIT_URL', required=True)
+@click.argument('dbname', required=True)
+def command_database_clone(url, dbname):
+    """
+    Clone an existing database from a Git repo
+
+    Shortcut for `git clone GIT_URL $HOME/.linkpad/$DBNAME`
+    """
+    if db_exists(dbname):
+        sys.exit("Error: database '{}' already exists".format(dbname))
+    sh.cd(LINKPAD_BASEDIR)
+    sh.git('clone', url, dbname, _fg=True)
+    click.echo()
+    dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
+    if not db_exists(dbname):
+        click.echo("Deleting '{}' ...".format(dbpath))
+        sh.rm('-rf', dbpath)
+        sys.exit("Error: url '{}' did not contain a valid Linkpad database".format(url))
+    click.echo("cloned '{}'".format(dbpath))
+
+@command_database.command(name='git',
+             short_help='Run Git commands against backend database folder')
+@click.argument('git_args', metavar='[ARGS]...', nargs=-1)
+def command_database_git(git_args):
+    """
+    Run Git commands against backend database folder
+    """
+    #subprocess.run(['git', '-C', LINKPAD_DBPATH] + [ arg for arg in git_args ], shell=False)
+    sh.git(['-C', LINKPAD_DBPATH] + [ arg for arg in git_args ], _fg=True, _tty_out=False)
 
 ###
 ### Command-line: "$PROGRAM import ..."
