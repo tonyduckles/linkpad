@@ -80,7 +80,7 @@ def datetime_utc_to_local(utc_dt):
 
 def datetime_format_relative(utc_dt):
     """ Format date relative to the current time, e.g. "2 hours ago" """
-    delta = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc) - utc_dt
+    delta = datetime.datetime.now(datetime.timezone.utc) - utc_dt
     if delta.days < 2:
         seconds = (delta.days * 86400) + delta.seconds
         minutes = seconds // 60
@@ -490,7 +490,7 @@ def db_entry_add(db_entry_list, url, title, tags, extended, use_editor=True):
               'url': url,
               'title': title if title is not None else page_title(url),
               'tags': list(sorted(dict.fromkeys(tags))) if tags is not None else [],  # Remove duplicate tags
-              'created_date': datetime.datetime.utcnow(),
+              'created_date': datetime.datetime.now(datetime.timezone.utc),
               'extended': extended if extended is not None else '' }
 
     # Launch editor to allow user to finalize data
@@ -572,7 +572,7 @@ def db_entry_list_archive(entry_list, verbose=False):
 
         edit_entry = copy.deepcopy(entry)
         edit_entry['archived'] = True
-        edit_entry['archived_date'] = datetime.datetime.utcnow()
+        edit_entry['archived_date'] = datetime.datetime.now(datetime.timezone.utc)
         changed_list.append(edit_entry)
 
     return changed_list if len(changed_list) > 0 else None
@@ -590,7 +590,7 @@ def db_entry_list_remove(db_entry_list, entry_list, hard_delete=False):
                 else:
                     if (not 'removed' in entry) or (not entry['removed']):
                         entry['removed'] = True
-                        entry['removed_date'] = datetime.datetime.utcnow()
+                        entry['removed_date'] = datetime.datetime.now(datetime.timezone.utc)
                         changed_list.append(entry)
                 break
     return changed_list if len(changed_list) > 0 else None
