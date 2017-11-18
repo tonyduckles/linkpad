@@ -56,11 +56,11 @@ LINKPAD_BASEDIR = os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.li
 DB_ENTRY_REQUIRED_FIELDS = [ 'id',
                              'url',
                              'title',
+                             'extended',
                              'tags',
                              'created_date' ]
 DB_ENTRY_OPTIONAL_FIELDS = [ 'archived',
                              'archived_date',
-                             'extended',
                              'removed',
                              'removed_date',
                              'removed_reason' ]
