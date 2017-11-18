@@ -1332,6 +1332,8 @@ def command_db_clone(url, dbname):
     """
     if db_exists(dbname):
         sys.exit("Error: database '{}' already exists".format(dbname))
+    if not os.path.isdir(LINKPAD_BASEDIR):
+        sh.mkdir('-p', LINKPAD_BASEDIR)
     sh.cd(LINKPAD_BASEDIR)
     sh.git('clone', url, dbname, _fg=True)
     click.echo()
