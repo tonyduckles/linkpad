@@ -1006,6 +1006,36 @@ def command_list(search_args, include_removed, sort_key, sort_reverse, print_for
     print_format = print_format or get_config_option(LINKPAD_CONFIG, 'print_format', LINKPAD_DBNAME)
     db_entry_print(entry_list, print_format)
 
+@cli.command(name='fzf', short_help='Fuzzy search entries using fzf')
+@click.option('-a', '--all', 'include_removed', is_flag=True,
+        help='All entries, including removed entries')
+@click.option('-f', '--format', 'print_format', metavar='FORMAT',
+        help='Custom print format -- see "PRINT FORMAT"')
+@click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
+def command_list(search_args, include_removed, print_format):
+    """
+    Interactively search through 'linkpad list' results using fzf, print URLs
+    for any selected entries.
+
+    https://github.com/junegunn/fzf
+    """
+    if not any(os.access(os.path.join(path, 'fzf'), os.X_OK) for path in os.environ["PATH"].split(os.pathsep)):
+        sys.exit('fzf not found, see https://github.com/junegunn/fzf')
+
+    list_args = []
+    if print_format:
+        # 'print_format' must *always* have a %shortid prefix, so we can lookup
+        # the URL for any selected entries, i.e. for 'cut' handling below
+        if "%shortid" not in print_format:
+            print_format = "%shortid " + print_format
+    if print_format:
+        list_args += [ '--format', '"' + print_format + '"']
+    if include_removed:
+        list_args += [ '--all' ]
+    list_args += search_args
+
+    os.system("linkpad list {} | fzf --ansi --multi --exit-0 --select-1 | cut -c1-8 | xargs linkpad list --format \"%url\"".format(' '.join(list_args)))
+
 @cli.command(name='show',
              short_help='Show full contents of entries')
 @click.option('-a', '--all', 'include_removed', is_flag=True,
