@@ -1152,25 +1152,25 @@ def command_version():
     click.echo("{} {}".format(PROGRAM, VERSION))
 
 ###
-### Command-line: "$PROGRAM database ..."
+### Command-line: "$PROGRAM db ..."
 ###
 
-@cli.group(name='database', short_help='Database management')
-def command_database():
+@cli.group(name='db', short_help='Database management')
+def command_db():
     """ Database management """
     pass
 
-@command_database.command(name='name')
+@command_db.command(name='name')
 @click.option('-f', '--full', 'full_path', is_flag=True, help='Print full filepath')
-def command_database_name(full_path):
+def command_db_name(full_path):
     """
     Show current database name
     """
     click.echo(LINKPAD_DBPATH if full_path else LINKPAD_DBNAME)
 
-@command_database.command(name='list')
+@command_db.command(name='list')
 @click.option('-f', '--full', 'full_path', is_flag=True, help='Print full filepath')
-def command_database_list(full_path):
+def command_db_list(full_path):
     """
     List available database names
     """
@@ -1178,9 +1178,9 @@ def command_database_list(full_path):
         if entry.is_dir() and db_exists(entry.name):
             click.echo(entry.path if full_path else entry.name)
 
-@command_database.command(name='env')
+@command_db.command(name='env')
 @click.argument('dbname', required=False)
-def command_database_env(dbname):
+def command_db_env(dbname):
     """
     Display the commands to setup the shell environment for a database
     """
@@ -1190,11 +1190,11 @@ def command_database_env(dbname):
 
     click.echo('export LINKPAD_DBNAME=\'{}\''.format(dbname))
     click.echo('# Run this command to configure your shell:')
-    click.echo('# eval $(linkpad database env \'{}\')'.format(dbname))
+    click.echo('# eval $(linkpad db env \'{}\')'.format(dbname))
 
-@command_database.command(name='create', short_help='Create a new database')
+@command_db.command(name='create', short_help='Create a new database')
 @click.argument('dbname')
-def command_database_create(dbname):
+def command_db_create(dbname):
     """
     Create a new database
     """
@@ -1204,11 +1204,11 @@ def command_database_create(dbname):
     dbpath = os.path.join(LINKPAD_BASEDIR, dbname)
     click.echo("created '{}'".format(dbpath))
 
-@command_database.command(name='clone',
+@command_db.command(name='clone',
              short_help='Git-clone an existing database')
 @click.argument('url', metavar='GIT_URL', required=True)
 @click.argument('dbname', required=True)
-def command_database_clone(url, dbname):
+def command_db_clone(url, dbname):
     """
     Clone an existing database from a Git repo
 
@@ -1226,10 +1226,10 @@ def command_database_clone(url, dbname):
         sys.exit("Error: url '{}' did not contain a valid Linkpad database".format(url))
     click.echo("cloned '{}'".format(dbpath))
 
-@command_database.command(name='git',
+@cli.command(name='git',
              short_help='Run Git commands against backend database folder')
 @click.argument('git_args', metavar='[ARGS]...', nargs=-1)
-def command_database_git(git_args):
+def command_db_git(git_args):
     """
     Run Git commands against backend database folder
     """
