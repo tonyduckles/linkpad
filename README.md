@@ -90,8 +90,12 @@ Run `linkpad --help` to get usage information:
     Commands:
       add       Add new entry
       archive   Create offline webpage archive of entries
-      database  Database management
+      check     Check for broken links
+      config    Show configuration
+      db        Database management
       edit      Edit existing entries
+      fzf       Fuzzy search entries using fzf
+      git       Run Git commands against backend database folder
       import    Import entries
       list      List entries
       remove    Remove entries
@@ -123,17 +127,17 @@ want.
 
 Create a new database:
 
-    $ linkpad database create mybookmarks
+    $ linkpad db create mybookmarks
 
 Switch to using a different database:
 
 ```bash
-$ linkpad database env mybookmarks
+$ linkpad db env mybookmarks
 export LINKPAD_DBNAME='mybookmarks'
 # Run this command to configure your shell:
-# eval $(linkpad database env 'mybookmarks')
+# eval $(linkpad db env 'mybookmarks')
 
-$ eval $(linkpad database env mybookmarks)
+$ eval $(linkpad db env mybookmarks)
 ```
 
 ### Bookmarks
