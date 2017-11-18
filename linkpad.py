@@ -715,20 +715,36 @@ def load_config():
     cp.read(fpath)
     return cp
 
-def get_config_option(config, option, dbname=None):
+def config_option(config, key, dbname=None, getbool=False):
     """ Get config option, first checking database-level value, else default-level value """
     if config is None:
         return None
-    config_defaults = config['defaults'] if 'defaults' in config else None
-    config_dbname = config["database \"{}\"".format(dbname)] if "database \"{}\"".format(dbname) in config else None
-    value = None
-    value = value or config_dbname.get(option) if config_dbname is not None else None
-    value = value or config_defaults.get(option) if config_defaults is not None else None
-    return value
+    return config_database_option(config, key, dbname=dbname, getbool=getbool) or \
+           config_default_option(config, key, getbool=getbool)
+
+def config_default_option(config, key, getbool=False):
+    """ Get default-level config option """
+    if config is None:
+        return None
+    section = 'defaults'
+    if not section in config:
+        return None
+    return config[section].get(key, None) if not getbool else config[section].getboolean(key)
+
+def config_database_option(config, key, dbname=None, getbool=False):
+    """ Get database-level config option """
+    if config is None:
+        return None
+    if dbname is None:
+        return None
+    section = 'database "{}"'.format(dbname)
+    if not section in config:
+        return None
+    return config[section].get(key, None) if not getbool else config[section].getboolean(key)
 
 LINKPAD_CONFIG = load_config()
 LINKPAD_DBNAME = os.environ.get('LINKPAD_DBNAME') or \
-                 get_config_option(LINKPAD_CONFIG, 'database') or \
+                 config_default_option(LINKPAD_CONFIG, 'database') or \
                  'default'
 LINKPAD_DBPATH = os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
 
@@ -826,7 +842,7 @@ def command_add(url, title, tags, extended, archive, no_edit):
     if changed_list is None:
         sys.exit('No changes found')
 
-    archive = archive or get_config_option(LINKPAD_CONFIG, 'archive', LINKPAD_DBNAME)
+    archive = archive or config_option(LINKPAD_CONFIG, 'archive', LINKPAD_DBNAME, getbool=True)
     archived_list = None
     if archive:
         archived_list = db_entry_list_archive(changed_list)
@@ -1004,7 +1020,7 @@ def command_list(search_args, include_removed, sort_key, sort_reverse, print_for
     entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
     if sort_reverse:
         entry_list.reverse()
-    print_format = print_format or get_config_option(LINKPAD_CONFIG, 'print_format', LINKPAD_DBNAME)
+    print_format = print_format or config_option(LINKPAD_CONFIG, 'print_format', LINKPAD_DBNAME)
     db_entry_print(entry_list, print_format)
 
 @cli.command(name='fzf', short_help='Fuzzy search entries using fzf')
@@ -1024,10 +1040,14 @@ def command_list(search_args, include_removed, print_format):
         sys.exit('fzf not found, see https://github.com/junegunn/fzf')
 
     list_args = []
+    print_format = print_format or \
+                   config_option(LINKPAD_CONFIG, 'fzf_print_format', LINKPAD_DBNAME) or \
+                   config_option(LINKPAD_CONFIG, 'print_format', LINKPAD_DBNAME) or \
+                   '%title [%url] (%tags)'
     if print_format:
         # 'print_format' must *always* have a %shortid prefix, so we can lookup
         # the URL for any selected entries, i.e. for 'cut' handling below
-        if "%shortid" not in print_format:
+        if not print_format.startswith("%shortid"):
             print_format = "%shortid " + print_format
     if print_format:
         list_args += [ '--format', '"' + print_format + '"']
@@ -1035,7 +1055,7 @@ def command_list(search_args, include_removed, print_format):
         list_args += [ '--all' ]
     list_args += search_args
 
-    os.system("linkpad list {} | fzf --ansi --multi --exit-0 --select-1 | cut -c1-8 | xargs linkpad list --format \"%url\"".format(' '.join(list_args)))
+    os.system("{} list {} | fzf --ansi --multi --exit-0 --select-1 | cut -c1-8 | xargs {} list --format \"%url\"".format(PROGRAM, ' '.join(list_args), PROGRAM))
 
 @cli.command(name='show',
              short_help='Show full contents of entries')
@@ -1215,7 +1235,26 @@ def check_url(entry, timeout):
              short_help='Show configuration')
 def command_config():
     """
-    Show the current user-configuration -- ~/.linkpad/config
+    Show the current user-configuration, reading from ~/.linkpad/config
+
+    \b
+    CONFIGURATION SECTIONS:
+       The ~/.linkpad/config file can have multiple sections:
+       - [defaults] ............ Global-level default options
+       - [database "$DBNAME"] .. Database-specific options
+
+    \b
+    CONFIGURATION OPTIONS:
+       Within each section, you can set these options:
+    \b
+       (Defaults-only)
+       database ........... Default database name
+    \b
+       (Any section)
+       archive ............ Set to 'true' to enable --archive in `linkpad add`
+       print_format ....... --print_format to use in `linkpad list`
+       fzf_print_format ... --print_format to use in `linkpad list`
+
     """
     if LINKPAD_CONFIG is not None:
         for section in LINKPAD_CONFIG.sections():
