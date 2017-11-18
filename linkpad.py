@@ -40,6 +40,7 @@ import random
 import multiprocessing.dummy
 import functools
 import tqdm
+import configparser
 
 # Workaround for "http.client.HTTPException: got more than 100 headers" exceptions.
 # Some servers can be misconfigured and can return an expected # of headers.
@@ -51,8 +52,6 @@ PROGRAM = os.path.basename(sys.argv[0])
 USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
 
 LINKPAD_BASEDIR = os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.linkpad')
-LINKPAD_DBNAME = os.environ.get('LINKPAD_DBNAME') or "default"
-LINKPAD_DBPATH = os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
 
 DB_ENTRY_REQUIRED_FIELDS = [ 'id',
                              'url',
@@ -702,6 +701,39 @@ def db_git_commit(commit_desc, archive_list=None):
     _git.commit('-q', '-m', commit_desc)
 
 
+
+###
+### User-configuration
+###
+
+def load_config():
+    """ Load user configuration """
+    fpath = os.path.join(LINKPAD_BASEDIR, "config")
+    if not os.path.isfile(fpath):
+        return None
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.read(fpath)
+    return cp
+
+def get_config_option(config, option, dbname=None):
+    """ Get config option, first checking database-level value, else default-level value """
+    if config is None:
+        return None
+    config_defaults = config['defaults'] if 'defaults' in config else None
+    config_dbname = config["database \"{}\"".format(dbname)] if "database \"{}\"".format(dbname) in config else None
+    value = None
+    value = value or config_dbname.get(option) if config_dbname is not None else None
+    value = value or config_defaults.get(option) if config_defaults is not None else None
+    return value
+
+LINKPAD_CONFIG = load_config()
+LINKPAD_DBNAME = os.environ.get('LINKPAD_DBNAME') or \
+                 get_config_option(LINKPAD_CONFIG, 'database') or \
+                 'default'
+LINKPAD_DBPATH = os.path.join(LINKPAD_BASEDIR, LINKPAD_DBNAME)
+
+
+
 ###
 ### Main command-line entry point: "$PROGRAM ..."
 ###
@@ -794,6 +826,7 @@ def command_add(url, title, tags, extended, archive, no_edit):
     if changed_list is None:
         sys.exit('No changes found')
 
+    archive = archive or get_config_option(LINKPAD_CONFIG, 'archive', LINKPAD_DBNAME)
     archived_list = None
     if archive:
         archived_list = db_entry_list_archive(changed_list)
@@ -970,6 +1003,7 @@ def command_list(search_args, include_removed, sort_key, sort_reverse, print_for
     entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
     if sort_reverse:
         entry_list.reverse()
+    print_format = print_format or get_config_option(LINKPAD_CONFIG, 'print_format', LINKPAD_DBNAME)
     db_entry_print(entry_list, print_format)
 
 @cli.command(name='show',
@@ -1145,6 +1179,18 @@ def check_url(entry, timeout):
         'error': error,
     }
     return ret
+
+@cli.command(name='config',
+             short_help='Show configuration')
+def command_config():
+    """
+    Show the current user-configuration -- ~/.linkpad/config
+    """
+    if LINKPAD_CONFIG is not None:
+        for section in LINKPAD_CONFIG.sections():
+            click.echo('[{}]'.format(section))
+            for key in LINKPAD_CONFIG[section]:
+                click.echo("  {} = {}".format(key, LINKPAD_CONFIG[section][key]))
 
 @cli.command(name='version',
              short_help='Show version')
