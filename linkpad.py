@@ -830,6 +830,7 @@ def command_add(url, title, tags, extended, archive, no_edit):
     archived_list = None
     if archive:
         archived_list = db_entry_list_archive(changed_list)
+        _ = db_entry_list_update(db_entry_list, archived_list)
 
     # Save results
     db_save_db(db_entry_list)
