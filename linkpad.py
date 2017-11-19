@@ -432,7 +432,7 @@ def db_entry_externalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime
 
 def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     """ Convert an entry dict from external to internal format """
-    entry = db_entry_internalize_trim(entry)  # Remove empty optional fields
+    entry = db_entry_internalize_trim(entry)  # Remove empty fields
     for field in entry:
         if field in [ 'created_date', 'archived_date', 'removed_date' ]:
             date = datetime.datetime.strptime(entry[field], datetime_format)
@@ -440,8 +440,11 @@ def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     return entry
 
 def db_entry_internalize_trim(entry):
-    """ Remove empty optional fields from an internal-format entry """
+    """ Remove empty fields from an internal-format entry """
     for field in DB_ENTRY_OPTIONAL_FIELDS:
+        if field in entry and type(entry[field]) is str and len(entry[field]) == 0:
+            del entry[field]
+    for field in DB_ENTRY_REQUIRED_FIELDS:
         if field in entry and type(entry[field]) is str and len(entry[field]) == 0:
             del entry[field]
     return entry
@@ -1347,7 +1350,7 @@ def command_db_clone(url, dbname):
 @cli.command(name='git',
              short_help='Run Git commands against backend database folder')
 @click.argument('git_args', metavar='[ARGS]...', nargs=-1)
-def command_db_git(git_args):
+def command_git(git_args):
     """
     Run Git commands against backend database folder
     """
@@ -1391,7 +1394,7 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
             'created_date': datetime.datetime.strptime(
                 import_item['time'],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
             }
-        import_entry = db_entry_internalize_trim(import_entry)
+        import_entry = db_entry_internalize_trim(import_entry)  # Remove empty fields
 
         # If there's an existing entry with this same url, update that entry instead
         matches = [ entry for entry in db_entry_list if import_entry['url'] == entry['url'] ]
