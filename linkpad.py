@@ -53,18 +53,17 @@ USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36
 
 LINKPAD_BASEDIR = os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.linkpad')
 
-DB_ENTRY_REQUIRED_FIELDS = [ 'id',
+DB_ENTRY_PUBLIC_FIELDS =   [ 'id',
                              'url',
                              'title',
                              'extended',
                              'tags',
                              'created_date' ]
-DB_ENTRY_OPTIONAL_FIELDS = [ 'archived',
+DB_ENTRY_PRIVATE_FIELDS =  [ 'archived',
                              'archived_date',
                              'removed',
                              'removed_date',
                              'removed_reason' ]
-DB_ENTRY_USEREDIT_FIELDS = copy.deepcopy(DB_ENTRY_REQUIRED_FIELDS)
 
 
 
@@ -406,7 +405,8 @@ def db_save_db(db_entry_list):
         for entry in sorted(db_entry_list, key=lambda entry: entry['created_date']):
             f.write('[' if first else ',\n')
             first = False
-            f.write(json.dumps(db_entry_externalize(copy.deepcopy(entry)), separators=(',', ':')))
+            entry_save = db_entry_externalize(db_entry_trim_empty_fields(copy.deepcopy(entry)))
+            f.write(json.dumps(entry_save, separators=(',', ':')))
         f.write(']')
 
 def db_entry_get(db_entry_list, url):
@@ -422,8 +422,9 @@ def db_entry_generate_id():
 
 def db_entry_externalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime_as_local=False):
     """ Convert an entry dict from internal to external format """
-    for field in entry:
-        if field in [ 'created_date', 'archived_date', 'removed_date' ]:
+    # Convert date-type values to formatted date-strings
+    for field in [ 'created_date', 'archived_date', 'removed_date' ]:
+        if field in entry:
             date = entry[field].replace(tzinfo=datetime.timezone.utc)
             if datetime_as_local:
                 date = datetime_utc_to_local(date)
@@ -432,37 +433,39 @@ def db_entry_externalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z', datetime
 
 def db_entry_internalize(entry, datetime_format='%Y-%m-%dT%H:%M:%SZ%z'):
     """ Convert an entry dict from external to internal format """
-    entry = db_entry_internalize_trim(entry)  # Remove empty fields
-    for field in entry:
-        if field in [ 'created_date', 'archived_date', 'removed_date' ]:
+    # Convert formatted date-strings to date-type values
+    for field in [ 'created_date', 'archived_date', 'removed_date' ]:
+        if field in entry:
             date = datetime.datetime.strptime(entry[field], datetime_format)
             entry[field] = date.astimezone(datetime.timezone.utc)  # Make sure datetime is UTC
+    # Make sure all public fields are present in the 'entry' collection
+    for field in DB_ENTRY_PUBLIC_FIELDS:
+        if not field in entry:
+            entry[field] = ''
     return entry
 
-def db_entry_internalize_trim(entry):
-    """ Remove empty fields from an internal-format entry """
-    for field in DB_ENTRY_OPTIONAL_FIELDS:
-        if field in entry and type(entry[field]) is str and len(entry[field]) == 0:
-            del entry[field]
-    for field in DB_ENTRY_REQUIRED_FIELDS:
-        if field in entry and type(entry[field]) is str and len(entry[field]) == 0:
-            del entry[field]
-    return entry
+def db_entry_trim_empty_fields(entry):
+    """ Remove empty fields from an internal-format entry dict """
+    entry_trim = copy.deepcopy(entry)  # Make a copy to modify as needed
+    for field in [ 'url', 'title', 'extended' ]:
+        if field in entry:
+            if (entry[field] is None) or \
+               (type(entry[field]) is str and len(entry[field]) == 0):
+                del entry_trim[field]
+    return entry_trim
 
-def db_entry_to_editdoc(entry, all_fields=False, datetime_format='%Y-%m-%d %H:%M:%S %z', datetime_as_local=True):
+def db_entry_to_editdoc(entry, include_private_fields=False, datetime_format='%Y-%m-%d %H:%M:%S %z', datetime_as_local=True, hide_empty=False):
     """ Return an OrderedDict containing the editable fields for an entry, for user-editing """
     doc = collections.OrderedDict()
     fields = []
-    if all_fields:
-        # Include all fields
-        fields.extend(DB_ENTRY_REQUIRED_FIELDS)
-        fields.extend(DB_ENTRY_OPTIONAL_FIELDS)
-    else:
-        # Only include user-editable fields
-        fields.extend(DB_ENTRY_USEREDIT_FIELDS)
+    fields.extend(DB_ENTRY_PUBLIC_FIELDS)
+    if include_private_fields:
+        fields.extend(DB_ENTRY_PRIVATE_FIELDS)
 
     for field in fields:
         if field in entry:
+            if (type(entry[field]) is str and len(entry[field]) == 0) and hide_empty:
+                continue
             doc[field] = entry[field]
 
     return db_entry_externalize(doc, datetime_format, datetime_as_local)
@@ -472,11 +475,8 @@ def db_entry_from_editdoc(doc, datetime_format='%Y-%m-%d %H:%M:%S %z'):
     # TODO: Gracefully error if user removed a required field
     #       and/or added a non-user-editable optional field?
     entry = {}
-    for field in DB_ENTRY_REQUIRED_FIELDS:
+    for field in DB_ENTRY_PUBLIC_FIELDS:
         entry[field] = doc[field]
-    for field in DB_ENTRY_OPTIONAL_FIELDS:
-        if field in doc:
-            entry[field] = doc[field]
 
     return db_entry_internalize(entry, datetime_format)
 
@@ -516,8 +516,26 @@ def db_entry_list_edit(entry_list):
 
     # Map the post-edited external format back to internal format
     doc_list = yaml.safe_load_all(yaml_edited)
-    entry_list = [ db_entry_from_editdoc(doc) for doc in doc_list ]
-    return entry_list
+    entry_edit_list = [ db_entry_from_editdoc(doc) for doc in doc_list ]
+
+    # Carry-forward any internal/private fields
+    if len(entry_edit_list) != len(entry_list):
+        sys.exit('Error: cannot delete entries during "edit"')
+    for i in range(len(entry_list)):
+        entry_old = entry_list[i]
+        entry_new = entry_edit_list[i]
+        # Enforce that certain required fields cannot be removed during edit
+        for field in [ 'id', 'created_date', 'url' ]:
+            if not field in entry_new:
+                sys.exit('Error: cannot remove field "{}" field on entries during "edit"'.format(field))
+        # Enforce that "id" value cannot be changed during edit
+        if entry_old['id'] != entry_new['id']:
+            sys.exit('Error: cannot change "id" on entries during "edit"')
+        for field in DB_ENTRY_PRIVATE_FIELDS:
+            if field in entry_old:
+                entry_new[field] = entry_old[field]
+
+    return entry_edit_list
 
 def db_entry_list_update(db_entry_list, entry_list):
     """ Add/update entries in the database """
@@ -537,9 +555,6 @@ def db_entry_list_update(db_entry_list, entry_list):
                         break
                 for key in new_entry:
                     if not key in old_entry:
-                        changed = True
-                        break
-                    if old_entry[key] != new_entry[key]:
                         changed = True
                         break
                 if changed:
@@ -972,7 +987,7 @@ def command_remove(search_args, hard_delete):
 @cli.command(name='list', short_help='List entries')
 @click.option('-a', '--all', 'include_removed', is_flag=True,
         help='All entries, including removed entries')
-@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
+@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_PUBLIC_FIELDS),
         default='created_date', show_default=True,
         help='Sort list by entry field')
 @click.option('-r', '--reverse', 'sort_reverse', is_flag=True,
@@ -1032,7 +1047,7 @@ def command_list(search_args, include_removed, sort_key, sort_reverse, print_for
 @click.option('-f', '--format', 'print_format', metavar='FORMAT',
         help='Custom print format -- see "PRINT FORMAT"')
 @click.argument('search_args', metavar='[SEARCH]...', nargs=-1)
-def command_list(search_args, include_removed, print_format):
+def command_fzf(search_args, include_removed, print_format):
     """
     Interactively search through 'linkpad list' results using fzf, print URLs
     for any selected entries.
@@ -1064,7 +1079,7 @@ def command_list(search_args, include_removed, print_format):
              short_help='Show full contents of entries')
 @click.option('-a', '--all', 'include_removed', is_flag=True,
         help='All entries, including removed entries')
-@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_REQUIRED_FIELDS),
+@click.option('-s', '--sort', 'sort_key', type=click.Choice(DB_ENTRY_PUBLIC_FIELDS),
         default='created_date', show_default=True,
         help='Sort list by entry field')
 @click.option('-r', '--reverse', 'sort_reverse', is_flag=True,
@@ -1089,7 +1104,7 @@ def command_show(search_args, include_removed, sort_key, sort_reverse):
     entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
 
     # Map the internal format entries to external edit-doc format
-    doc_list = [ db_entry_to_editdoc(entry, all_fields=True) for entry in entry_list ]
+    doc_list = [ db_entry_to_editdoc(entry, include_private_fields=True, hide_empty=True) for entry in entry_list ]
     if sort_reverse:
         doc_list.reverse()
 
@@ -1394,7 +1409,11 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
             'created_date': datetime.datetime.strptime(
                 import_item['time'],"%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
             }
-        import_entry = db_entry_internalize_trim(import_entry)  # Remove empty fields
+        for field in DB_ENTRY_PUBLIC_FIELDS:
+            if field == 'id':  # Don't set a blank 'id' field
+                continue
+            if field not in import_entry:
+                import_entry[field] = ''
 
         # If there's an existing entry with this same url, update that entry instead
         matches = [ entry for entry in db_entry_list if import_entry['url'] == entry['url'] ]
@@ -1402,7 +1421,6 @@ def command_import_pinboard(jsonfile, verbose, dry_run):
             raise Exception('Internal Error: found multiple matching entries for url "{}"'.format(import_entry['url']))
         if len(matches) > 0:
             entry = copy.deepcopy(matches[0])  # Make a mutable copy of 'entry'
-
             # Look for difference between entry vs import_entry
             changed = False
             for key in import_entry:
