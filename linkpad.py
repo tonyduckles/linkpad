@@ -41,6 +41,7 @@ import multiprocessing.dummy
 import functools
 import tqdm
 import configparser
+import shlex
 
 # Workaround for "http.client.HTTPException: got more than 100 headers" exceptions.
 # Some servers can be misconfigured and can return an expected # of headers.
@@ -1071,12 +1072,20 @@ def command_fzf(search_args, include_removed, print_format):
         if not print_format.startswith("%shortid"):
             print_format = "%shortid " + print_format
     if print_format:
-        list_args += [ '--format', '"' + print_format + '"']
+        list_args += [ '--format', shlex.quote(print_format) ]
     if include_removed:
         list_args += [ '--all' ]
-    list_args += search_args
+    list_args += [ shlex.quote(arg) for arg in search_args ]
 
-    os.system("{} list {} | fzf --ansi --multi --exit-0 --select-1 | cut -c1-8 | xargs {} list --format \"%url\"".format(PROGRAM, ' '.join(list_args), PROGRAM))
+    # - Run `linkpad list $*` to get the initial results
+    # - Pipe to `fzf
+    # - Pipe `fzf` selection(s) through `cut` to get the shortid's for those selections
+    # - Run `linkpad list --format` to get the URL's for those selected shortid's
+    cmd = "{} list {}".format(shlex.quote(PROGRAM), ' '.join(list_args))
+    cmd += " | fzf --ansi --multi --exit-0 --select-1"
+    cmd += " | cut -c1-8"
+    cmd += " | xargs {} list --format '%url'".format(shlex.quote(PROGRAM))
+    os.system(cmd)
 
 @cli.command(name='show',
              short_help='Show full contents of entries')
@@ -1372,8 +1381,9 @@ def command_git(git_args):
     """
     Run Git commands against backend database folder
     """
-    #subprocess.run(['git', '-C', LINKPAD_DBPATH] + [ arg for arg in git_args ], shell=False)
-    sh.git(['-C', LINKPAD_DBPATH] + [ arg for arg in git_args ], _fg=True, _tty_out=False)
+    arg_list = ' '.join([ shlex.quote(arg) for arg in git_args ])
+    cmd = "git -C {} {}".format(shlex.quote(LINKPAD_DBPATH), arg_list)
+    os.system(cmd)
 
 ###
 ### Command-line: "$PROGRAM import ..."
