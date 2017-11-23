@@ -53,13 +53,15 @@ USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36
 
 LINKPAD_BASEDIR = os.environ.get('LINKPAD_BASEDIR') or os.path.expanduser('~/.linkpad')
 
-DB_ENTRY_PUBLIC_FIELDS =   [ 'id',
-                             'url',
+# User-editable entry fields
+DB_ENTRY_PUBLIC_FIELDS =   [ 'url',
                              'title',
                              'extended',
                              'tags',
                              'created_date' ]
-DB_ENTRY_PRIVATE_FIELDS =  [ 'archived',
+# Internal non-editable entry fields
+DB_ENTRY_PRIVATE_FIELDS =  [ 'id',
+                             'archived',
                              'archived_date',
                              'removed',
                              'removed_date',
@@ -468,6 +470,10 @@ def db_entry_to_editdoc(entry, include_private_fields=False, datetime_format='%Y
                 continue
             doc[field] = entry[field]
 
+    if 'id' in doc:
+        # 'id' field should always be first in the OrderedDict(), for `linkpad show` display
+        doc.move_to_end('id', last=False)
+
     return db_entry_externalize(doc, datetime_format, datetime_as_local)
 
 def db_entry_from_editdoc(doc, datetime_format='%Y-%m-%d %H:%M:%S %z'):
@@ -525,12 +531,9 @@ def db_entry_list_edit(entry_list):
         entry_old = entry_list[i]
         entry_new = entry_edit_list[i]
         # Enforce that certain required fields cannot be removed during edit
-        for field in [ 'id', 'created_date', 'url' ]:
+        for field in [ 'created_date', 'url' ]:
             if not field in entry_new:
                 sys.exit('Error: cannot remove field "{}" field on entries during "edit"'.format(field))
-        # Enforce that "id" value cannot be changed during edit
-        if entry_old['id'] != entry_new['id']:
-            sys.exit('Error: cannot change "id" on entries during "edit"')
         for field in DB_ENTRY_PRIVATE_FIELDS:
             if field in entry_old:
                 entry_new[field] = entry_old[field]
