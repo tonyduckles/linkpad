@@ -682,7 +682,9 @@ def db_entry_search_match(entry, search_arg):
 
 def db_entry_print(entry_list, print_format=None):
     """ Print entries based on print_format template """
-    print_format = print_format or "#[fg=yellow]%shortid#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
+    print_format = print_format or \
+                   config_option(LINKPAD_CONFIG, 'print_format', LINKPAD_DBNAME) or \
+                   "#[fg=yellow]%shortid#[none] %title #[fg=cyan][%url]#[none] #[fg=brightgreen](%tags)#[none] #[fg=brightblack](%created_ago)#[none]"
     print_format_line = format_colorize(print_format)  # Evaluate style mnemonics ahead of time
 
     for entry in entry_list:
@@ -1042,7 +1044,6 @@ def command_list(search_args, include_removed, sort_key, sort_reverse, print_for
     entry_list = sorted(entry_list, key=lambda entry: entry[sort_key])
     if sort_reverse:
         entry_list.reverse()
-    print_format = print_format or config_option(LINKPAD_CONFIG, 'print_format', LINKPAD_DBNAME)
     db_entry_print(entry_list, print_format)
 
 @cli.command(name='fzf', short_help='Fuzzy search entries using fzf')
