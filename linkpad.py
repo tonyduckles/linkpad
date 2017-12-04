@@ -11,7 +11,7 @@
 # Database Structure:
 # ===================
 # - Bookmarks are stored as a JSON dict at "$dbpath/entries.json".
-# - Optional webpage archive is stored at "$dbpath/archive/<id>.html".
+# - Optional webpage archive is stored at "$dbpath/archive/<$id[0:2]>/<$id[2:-1]>/index.html".
 # - Internal schema veraion stored at "$dbpath/format".
 #
 # Dependencies:
@@ -363,7 +363,82 @@ def db_filepath_database_file(dbpath=None):
 
 def db_filepath_entry_archive_dir(id, dbpath=None):
     dbpath = dbpath or LINKPAD_DBPATH
-    return os.path.join(dbpath, 'archive', id)
+    return os.path.join(dbpath, 'archive', id[0:2], id[2:-1])
+
+def db_format_ver():
+    format_file = db_filepath_format_file()
+    with open(format_file,'r') as f:
+        format_ver = int(f.read().splitlines()[0])
+    return format_ver
+
+def db_format_latest_ver():
+    return 2
+
+def db_check_format_ver(allow_lower=False):
+    format_ver = db_format_ver()                # Format-version of database
+    format_latest_ver = db_format_latest_ver()  # Latest database format-version we know about
+    if format_ver > format_latest_ver:
+        sys.exit("Error: database '{}' has unsupported format:\nformat version '{}' is higher than highest supported format version (format_latest_ver={})".format(LINKPAD_DBNAME, format_ver, format_latest_ver))
+    if format_ver < format_latest_ver and not allow_lower:
+        sys.exit("Error: database '{}' is using an older format, use '{} upgrade'".format(LINKPAD_DBNAME, PROGRAM))
+
+def db_format_upgrade_db():
+    db_check_format_ver(allow_lower=True)
+    format_file = db_filepath_format_file()
+    format_ver = db_format_ver()
+    _git = sh.git.bake('-C', LINKPAD_DBPATH)  # Helper to run 'git' commands against this specific repo
+    changed = False
+
+    if format_ver == 1:
+        click.echo("Upgrading database '{}' to format '{}' ...".format(LINKPAD_DBNAME, 2))
+        """
+        format=1->2:
+        ------------
+        Restructure the database 'archive' subdirectory to shard entry
+        subdirectories by the first 2 chars, to avoid having a linearlly
+        increasing number of 'archive' child directories.
+        """
+        db_archive_dir = os.path.join(LINKPAD_DBPATH, 'archive')
+        for d in os.scandir(db_archive_dir):
+            path = d.path
+            name = os.path.basename(d)
+            # Ignore non-directories
+            if not os.path.isdir(d):
+                continue
+            # Ignore non-GUID subdirectories
+            if len(name) != 32:
+                continue
+            # Ignore subdirectories which don't contain the expected 'index.html' file
+            if not os.path.isfile(os.path.join(db_archive_dir, name, 'index.html')):
+                continue
+            # Check if file is tracked by the Git repo
+            git_tracked = False
+            try:
+                _git('ls-files', '--error-unmatch', d.path)
+                git_tracked = True
+            except ErrorReturnCode_1:
+                git_tracked = False
+            except ErrorReturnCode:
+                sys.exit("Error checking 'git ls-files' for '{}'".format(d.path))
+            # Ignore subdirectories where the expected destination subdirectory already exists
+            entry_archive_dir_old = d.path
+            entry_archive_dir_new = os.path.join(db_archive_dir, name[0:2], name[2:-1])
+            if os.path.isdir(entry_archive_dir_new):
+                continue
+            click.echo("$ git mv " + entry_archive_dir_old + " " + entry_archive_dir_new)
+            sh.mkdir(entry_archive_dir_new, parents=True)
+            for f in os.scandir(entry_archive_dir_old):
+                _git.mv(os.path.join(entry_archive_dir_old, f), entry_archive_dir_new)
+            sh.rm('-r', '-f', entry_archive_dir_old)
+
+        format_ver = 2
+        sh.echo(format_ver, _out=format_file)
+        _git.add(format_file)
+        changed = True
+
+    if changed:
+        _git.commit('-q', '-m', "Upgrade database: format={}".format(format_ver))
+
 
 def db_create_db(dbname):
     """ Initialize new database """
@@ -377,7 +452,7 @@ def db_create_db(dbname):
     _git.init('-q')          # Init git repo
 
     format_file = db_filepath_format_file(dbpath)
-    sh.echo("1", _out=format_file)
+    sh.echo(db_format_latest_ver(), _out=format_file)
     _git.add(format_file)
 
     _git.commit('-q', '-m', "Create database")
@@ -386,6 +461,7 @@ def db_load_db():
     """ Load all entries from database file """
     if not db_exists():
         sys.exit("Error: database '{}' does not exist".format(LINKPAD_DBNAME))
+    db_check_format_ver()
 
     dbfile = db_filepath_database_file()
     if os.path.isfile(dbfile):
@@ -1292,6 +1368,26 @@ def command_config():
             click.echo('[{}]'.format(section))
             for key in LINKPAD_CONFIG[section]:
                 click.echo("  {} = {}".format(key, LINKPAD_CONFIG[section][key]))
+
+@cli.command(name='upgrade',
+             short_help='Upgrade current database format')
+def command_upgrade():
+    db_check_format_ver(allow_lower=True)
+    format_ver = db_format_ver()
+    format_latest_ver = db_format_latest_ver()
+    if format_ver == format_latest_ver:
+        sys.exit("Database already at latest format")
+
+    click.echo("Upgrade format for database '{}'".format(LINKPAD_DBNAME))
+    click.echo("Current version: {}".format(db_format_ver()))
+    click.echo("Latest version:  {}".format(db_format_latest_ver()))
+    click.echo()
+    click.echo("Continue? [yn] ", nl=False)
+    if not click.getchar() == 'y':
+        click.echo()
+        sys.exit("User aborted")
+    click.echo()
+    db_format_upgrade_db()
 
 @cli.command(name='version',
              short_help='Show version')
