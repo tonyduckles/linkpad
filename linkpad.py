@@ -125,7 +125,7 @@ def format_colorize(format):
                 retval += format[pos1:]  # No counterpart format-end marker, just append remainder of string
                 break
             for style in format[pos1+2:pos2].split(','):
-                # styles
+                # ANSI styles
                 if style == 'none': retval += "\x1b[0m"
                 if style == 'bold': retval += "\x1b[1m"
                 if style == 'bright': retval += "\x1b[1m"
@@ -134,7 +134,7 @@ def format_colorize(format):
                 if style == 'underscore': retval += "\x1b[4m"
                 if style == 'blink': retval += "\x1b[5m"
                 if style == 'reverse': retval += "\x1b[7m"
-                # foreground
+                # ANSI foreground
                 if style == 'fg=black': retval += "\x1b[30m"
                 if style == 'fg=red': retval += "\x1b[31m"
                 if style == 'fg=green': retval += "\x1b[32m"
@@ -152,7 +152,7 @@ def format_colorize(format):
                 if style == 'fg=brightmagenta': retval += "\x1b[95m"
                 if style == 'fg=brightcyan': retval += "\x1b[96m"
                 if style == 'fg=brightwhite': retval += "\x1b[97m"
-                # background
+                # ANSI background
                 if style == 'bg=black': retval += "\x1b[40m"
                 if style == 'bg=red': retval += "\x1b[41m"
                 if style == 'bg=green': retval += "\x1b[42m"
@@ -170,6 +170,11 @@ def format_colorize(format):
                 if style == 'bg=brightmagenta': retval += "\x1b[105m"
                 if style == 'bg=brightcyan': retval += "\x1b[106m"
                 if style == 'bg=brightwhite': retval += "\x1b[107m"
+                # 256-color (8-bit) palette, e.g. 'fg=color:NNN' [https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit]
+                if style[0:9] == 'fg=color:': retval += "\x1b[38;5;{}m".format(style[9:])
+                if style[0:9] == 'bg=color:': retval += "\x1b[48;5;{}m".format(style[9:])
+                # Truecolor (24-bit) palette, e.g. 'fg=truecolor:RRGGBB' [https://en.wikipedia.org/wiki/ANSI_escape_code#24-bit]
+                if style[0:13] == 'fg=truecolor:': retval += "\x1b[38;2;{};{};{}m".format(int(style[13:15],16), int(style[15:17],16), int(style[17:19],16))
             pos3 = format.find('#[',pos2+1)  # Find next format-start marker
             retval += format[pos2+1:pos3 if (pos3 > 0) else None]  # Append text between current format-end and next format-start marker
             if pos3 < 0:
