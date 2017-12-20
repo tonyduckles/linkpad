@@ -47,7 +47,7 @@ import shlex
 # Some servers can be misconfigured and can return an expected # of headers.
 http.client._MAXHEADERS = 1000
 
-VERSION = 1.1
+VERSION = 1.2
 PROGRAM = os.path.basename(sys.argv[0])
 
 USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.36'
