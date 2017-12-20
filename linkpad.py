@@ -405,10 +405,9 @@ def db_format_upgrade_db():
         """
         db_archive_dir = os.path.join(LINKPAD_DBPATH, 'archive')
         for d in os.scandir(db_archive_dir):
-            path = d.path
-            name = os.path.basename(d)
+            name = os.path.basename(d.path)
             # Ignore non-directories
-            if not os.path.isdir(d):
+            if not os.path.isdir(d.path):
                 continue
             # Ignore non-GUID subdirectories
             if len(name) != 32:
@@ -433,7 +432,7 @@ def db_format_upgrade_db():
             click.echo("$ git mv " + entry_archive_dir_old + " " + entry_archive_dir_new)
             sh.mkdir(entry_archive_dir_new, parents=True)
             for f in os.scandir(entry_archive_dir_old):
-                _git.mv(os.path.join(entry_archive_dir_old, f), entry_archive_dir_new)
+                _git.mv(f.path, entry_archive_dir_new)
             sh.rm('-r', '-f', entry_archive_dir_old)
 
         format_ver = 2
