@@ -753,6 +753,9 @@ def db_entry_search_match(entry, search_arg):
     elif search_arg[:9] == 'archived:':
         val = (search_arg[9:].lower() == 'true')
         return (entry.get('archived', False) == val)
+    elif search_arg[:8] == 'removed:':
+        val = (search_arg[8:].lower() == 'true')
+        return (entry.get('removed', False) == val)
     else:
         string = "{} {} {} {}".format(entry['id'],
                                       entry['title'],
