@@ -404,36 +404,37 @@ def db_format_upgrade_db():
         increasing number of 'archive' child directories.
         """
         db_archive_dir = os.path.join(LINKPAD_DBPATH, 'archive')
-        for d in os.scandir(db_archive_dir):
-            name = os.path.basename(d.path)
-            # Ignore non-directories
-            if not os.path.isdir(d.path):
-                continue
-            # Ignore non-GUID subdirectories
-            if len(name) != 32:
-                continue
-            # Ignore subdirectories which don't contain the expected 'index.html' file
-            if not os.path.isfile(os.path.join(db_archive_dir, name, 'index.html')):
-                continue
-            # Check if file is tracked by the Git repo
-            git_tracked = False
-            try:
-                _git('ls-files', '--error-unmatch', d.path)
-                git_tracked = True
-            except ErrorReturnCode_1:
+        if os.path.isdir(db_archive_dir):
+            for d in os.scandir(db_archive_dir):
+                name = os.path.basename(d.path)
+                # Ignore non-directories
+                if not os.path.isdir(d.path):
+                    continue
+                # Ignore non-GUID subdirectories
+                if len(name) != 32:
+                    continue
+                # Ignore subdirectories which don't contain the expected 'index.html' file
+                if not os.path.isfile(os.path.join(db_archive_dir, name, 'index.html')):
+                    continue
+                # Check if file is tracked by the Git repo
                 git_tracked = False
-            except ErrorReturnCode:
-                sys.exit("Error checking 'git ls-files' for '{}'".format(d.path))
-            # Ignore subdirectories where the expected destination subdirectory already exists
-            entry_archive_dir_old = d.path
-            entry_archive_dir_new = os.path.join(db_archive_dir, name[0:2], name[2:-1])
-            if os.path.isdir(entry_archive_dir_new):
-                continue
-            click.echo("$ git mv " + entry_archive_dir_old + " " + entry_archive_dir_new)
-            sh.mkdir(entry_archive_dir_new, parents=True)
-            for f in os.scandir(entry_archive_dir_old):
-                _git.mv(f.path, entry_archive_dir_new)
-            sh.rm('-r', '-f', entry_archive_dir_old)
+                try:
+                    _git('ls-files', '--error-unmatch', d.path)
+                    git_tracked = True
+                except ErrorReturnCode_1:
+                    git_tracked = False
+                except ErrorReturnCode:
+                    sys.exit("Error checking 'git ls-files' for '{}'".format(d.path))
+                # Ignore subdirectories where the expected destination subdirectory already exists
+                entry_archive_dir_old = d.path
+                entry_archive_dir_new = os.path.join(db_archive_dir, name[0:2], name[2:-1])
+                if os.path.isdir(entry_archive_dir_new):
+                    continue
+                click.echo("$ git mv " + entry_archive_dir_old + " " + entry_archive_dir_new)
+                sh.mkdir(entry_archive_dir_new, parents=True)
+                for f in os.scandir(entry_archive_dir_old):
+                    _git.mv(f.path, entry_archive_dir_new)
+                sh.rm('-r', '-f', entry_archive_dir_old)
 
         format_ver = 2
         sh.echo(format_ver, _out=format_file)
